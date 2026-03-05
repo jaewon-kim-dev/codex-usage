@@ -1,0 +1,27 @@
+[package]
+name = "codex-usage"
+version = "0.1.0"
+edition = "2024"
+description = "Fast Codex usage analyzer written in Rust"
+
+[[bin]]
+name = "codex-usage"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.100"
+bincode = { version = "2.0.1", features = ["serde"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+chrono-tz = "0.10.4"
+clap = { version = "4.5.53", features = ["derive"] }
+comfy-table = "7.2.1"
+directories = "6.0.0"
+memchr = "2.7.6"
+rayon = "1.11.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["raw_value"] }
+walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"
