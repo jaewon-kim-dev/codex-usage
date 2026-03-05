@@ -2,6 +2,9 @@
 
 Fast Codex usage analyzer written in Rust.
 
+<img width="1268" height="535" alt="image" src="https://github.com/user-attachments/assets/18072c86-b15d-4e3f-a2a5-8dc0eb440644" />
+
+
 ## Setup
 
 ### Install Rust
