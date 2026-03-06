@@ -18,6 +18,11 @@ impl Usage {
         self.reasoning_output_tokens += other.reasoning_output_tokens;
         self.total_tokens += other.total_tokens;
     }
+
+    pub fn billable_input_tokens(&self) -> u64 {
+        self.input_tokens
+            .saturating_sub(self.cached_input_tokens.min(self.input_tokens))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,4 +73,22 @@ pub struct ReportRow {
     pub key: String,
     pub usage: Usage,
     pub models: BTreeMap<String, ModelTotals>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Usage;
+
+    #[test]
+    fn calculates_billable_input_tokens_without_cached_tokens() {
+        let usage = Usage {
+            input_tokens: 1_000,
+            cached_input_tokens: 250,
+            output_tokens: 0,
+            reasoning_output_tokens: 0,
+            total_tokens: 1_000,
+        };
+
+        assert_eq!(usage.billable_input_tokens(), 750);
+    }
 }

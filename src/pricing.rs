@@ -57,6 +57,14 @@ pub struct PricingCatalog {
     models: HashMap<String, LiteLLMModelPricing>,
 }
 
+impl Default for PricingCatalog {
+    fn default() -> Self {
+        Self {
+            models: HashMap::new(),
+        }
+    }
+}
+
 impl PricingCatalog {
     pub fn load() -> Result<Self> {
         let cache_path = default_pricing_cache_path()?;
@@ -266,9 +274,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn empty_catalog() -> PricingCatalog {
-        PricingCatalog {
-            models: HashMap::new(),
-        }
+        PricingCatalog::default()
     }
 
     #[test]

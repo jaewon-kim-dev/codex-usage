@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use codex_usage::pricing::{PricingCatalog, totals_cost_usd};
 use codex_usage::report::{GroupBy, SessionRow, aggregate_sessions, aggregate_usage};
 use codex_usage::scanner::{ScanOptions, scan_full_daily_rows, scan_sessions};
-use codex_usage::types::{ModelTotals, ReportRow};
+use codex_usage::types::{ModelTotals, ReportRow, Usage};
 use comfy_table::{Cell, ContentArrangement, Table, presets::UTF8_FULL};
 use directories::BaseDirs;
 use serde_json::{Map, Value, json};
@@ -158,7 +158,10 @@ fn render_usage_rows(
     if json_output {
         let totals = totals_from_report_rows(&rows, pricing_catalog);
         let mut payload = Map::<String, Value>::new();
-        payload.insert(kind.to_string(), serde_json::to_value(rows)?);
+        payload.insert(
+            kind.to_string(),
+            serde_json::to_value(report_row_payloads(&rows))?,
+        );
         payload.insert("totals".to_string(), serde_json::to_value(totals)?);
         println!("{}", serde_json::to_string_pretty(&Value::Object(payload))?);
         return Ok(());
@@ -190,7 +193,7 @@ fn render_usage_rows(
         table.add_row(vec![
             Cell::new(&row.key),
             Cell::new(models_summary(&row.models)),
-            Cell::new(format_number(row.usage.input_tokens)),
+            Cell::new(format_number(row.usage.billable_input_tokens())),
             Cell::new(format_number(row.usage.cached_input_tokens)),
             Cell::new(format_number(row.usage.output_tokens)),
             Cell::new(format_number(row.usage.reasoning_output_tokens)),
@@ -229,7 +232,7 @@ fn render_session_rows(
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "sessions": rows,
+                "sessions": session_row_payloads(&rows),
                 "totals": totals,
             }))?
         );
@@ -264,7 +267,7 @@ fn render_session_rows(
             Cell::new(&row.directory),
             Cell::new(&row.session_file),
             Cell::new(models_summary(&row.models)),
-            Cell::new(format_number(row.usage.input_tokens)),
+            Cell::new(format_number(row.usage.billable_input_tokens())),
             Cell::new(format_number(row.usage.cached_input_tokens)),
             Cell::new(format_number(row.usage.output_tokens)),
             Cell::new(format_number(row.usage.reasoning_output_tokens)),
@@ -297,13 +300,102 @@ fn render_session_rows(
 }
 
 #[derive(Debug, serde::Serialize)]
+struct UsagePayload {
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    raw_input_tokens: u64,
+    output_tokens: u64,
+    reasoning_output_tokens: u64,
+    total_tokens: u64,
+}
+
+impl From<&Usage> for UsagePayload {
+    fn from(usage: &Usage) -> Self {
+        Self {
+            input_tokens: usage.billable_input_tokens(),
+            cached_input_tokens: usage.cached_input_tokens,
+            raw_input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            reasoning_output_tokens: usage.reasoning_output_tokens,
+            total_tokens: usage.total_tokens,
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ModelTotalsPayload {
+    usage: UsagePayload,
+    is_fallback: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ReportRowPayload {
+    key: String,
+    usage: UsagePayload,
+    models: BTreeMap<String, ModelTotalsPayload>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SessionRowPayload {
+    date_key: String,
+    session_id: String,
+    session_file: String,
+    directory: String,
+    last_activity_unix_ms: i64,
+    usage: UsagePayload,
+    models: BTreeMap<String, ModelTotalsPayload>,
+}
+
+#[derive(Debug, serde::Serialize)]
 struct TotalsPayload {
     input_tokens: u64,
     cached_input_tokens: u64,
+    raw_input_tokens: u64,
     output_tokens: u64,
     reasoning_output_tokens: u64,
     total_tokens: u64,
     cost_usd: f64,
+}
+
+fn model_totals_payloads(
+    models: &BTreeMap<String, ModelTotals>,
+) -> BTreeMap<String, ModelTotalsPayload> {
+    models
+        .iter()
+        .map(|(model, totals)| {
+            (
+                model.clone(),
+                ModelTotalsPayload {
+                    usage: UsagePayload::from(&totals.usage),
+                    is_fallback: totals.is_fallback,
+                },
+            )
+        })
+        .collect()
+}
+
+fn report_row_payloads(rows: &[ReportRow]) -> Vec<ReportRowPayload> {
+    rows.iter()
+        .map(|row| ReportRowPayload {
+            key: row.key.clone(),
+            usage: UsagePayload::from(&row.usage),
+            models: model_totals_payloads(&row.models),
+        })
+        .collect()
+}
+
+fn session_row_payloads(rows: &[SessionRow]) -> Vec<SessionRowPayload> {
+    rows.iter()
+        .map(|row| SessionRowPayload {
+            date_key: row.date_key.clone(),
+            session_id: row.session_id.clone(),
+            session_file: row.session_file.clone(),
+            directory: row.directory.clone(),
+            last_activity_unix_ms: row.last_activity_unix_ms,
+            usage: UsagePayload::from(&row.usage),
+            models: model_totals_payloads(&row.models),
+        })
+        .collect()
 }
 
 fn totals_from_report_rows(rows: &[ReportRow], pricing_catalog: &PricingCatalog) -> TotalsPayload {
@@ -311,14 +403,16 @@ fn totals_from_report_rows(rows: &[ReportRow], pricing_catalog: &PricingCatalog)
         TotalsPayload {
             input_tokens: 0,
             cached_input_tokens: 0,
+            raw_input_tokens: 0,
             output_tokens: 0,
             reasoning_output_tokens: 0,
             total_tokens: 0,
             cost_usd: 0.0,
         },
         |mut totals, row| {
-            totals.input_tokens += row.usage.input_tokens;
+            totals.input_tokens += row.usage.billable_input_tokens();
             totals.cached_input_tokens += row.usage.cached_input_tokens;
+            totals.raw_input_tokens += row.usage.input_tokens;
             totals.output_tokens += row.usage.output_tokens;
             totals.reasoning_output_tokens += row.usage.reasoning_output_tokens;
             totals.total_tokens += row.usage.total_tokens;
@@ -336,14 +430,16 @@ fn totals_from_session_rows(
         TotalsPayload {
             input_tokens: 0,
             cached_input_tokens: 0,
+            raw_input_tokens: 0,
             output_tokens: 0,
             reasoning_output_tokens: 0,
             total_tokens: 0,
             cost_usd: 0.0,
         },
         |mut totals, row| {
-            totals.input_tokens += row.usage.input_tokens;
+            totals.input_tokens += row.usage.billable_input_tokens();
             totals.cached_input_tokens += row.usage.cached_input_tokens;
+            totals.raw_input_tokens += row.usage.input_tokens;
             totals.output_tokens += row.usage.output_tokens;
             totals.reasoning_output_tokens += row.usage.reasoning_output_tokens;
             totals.total_tokens += row.usage.total_tokens;
@@ -385,4 +481,54 @@ fn format_number(value: u64) -> String {
     }
     chunks.reverse();
     chunks.join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{report_row_payloads, totals_from_report_rows};
+    use codex_usage::pricing::PricingCatalog;
+    use codex_usage::types::{ReportRow, Usage};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn serializes_input_and_cached_input_separately() {
+        let rows = vec![ReportRow {
+            key: "2026-03-06".to_string(),
+            usage: Usage {
+                input_tokens: 1_000,
+                cached_input_tokens: 250,
+                output_tokens: 50,
+                reasoning_output_tokens: 10,
+                total_tokens: 1_050,
+            },
+            models: BTreeMap::new(),
+        }];
+
+        let payloads = report_row_payloads(&rows);
+
+        assert_eq!(payloads[0].usage.input_tokens, 750);
+        assert_eq!(payloads[0].usage.cached_input_tokens, 250);
+        assert_eq!(payloads[0].usage.raw_input_tokens, 1_000);
+    }
+
+    #[test]
+    fn reports_totals_with_billable_and_raw_input_tokens() {
+        let rows = vec![ReportRow {
+            key: "2026-03-06".to_string(),
+            usage: Usage {
+                input_tokens: 1_000,
+                cached_input_tokens: 250,
+                output_tokens: 50,
+                reasoning_output_tokens: 10,
+                total_tokens: 1_050,
+            },
+            models: BTreeMap::new(),
+        }];
+
+        let totals = totals_from_report_rows(&rows, &PricingCatalog::default());
+
+        assert_eq!(totals.input_tokens, 750);
+        assert_eq!(totals.cached_input_tokens, 250);
+        assert_eq!(totals.raw_input_tokens, 1_000);
+    }
 }
