@@ -35,6 +35,14 @@ fn event_key(timestamp_unix_ms: i64, timezone: Tz, group_by: &GroupBy) -> Option
     })
 }
 
+fn row_storage_key(key: &str, event: &UsageEvent, split_by_model: bool) -> String {
+    if split_by_model {
+        format!("{key}\u{1f}{}", event.model)
+    } else {
+        key.to_string()
+    }
+}
+
 pub fn accumulate_event(
     rows: &mut BTreeMap<String, ReportRow>,
     event: &UsageEvent,
@@ -42,6 +50,7 @@ pub fn accumulate_event(
     group_by: &GroupBy,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
+    split_by_model: bool,
 ) {
     let Some(event_date) = event_date(event.timestamp_unix_ms, timezone) else {
         return;
@@ -55,8 +64,9 @@ pub fn accumulate_event(
     let Some(key) = event_key(event.timestamp_unix_ms, timezone, group_by) else {
         return;
     };
+    let storage_key = row_storage_key(&key, event, split_by_model);
 
-    let row = rows.entry(key.clone()).or_insert_with(|| ReportRow {
+    let row = rows.entry(storage_key).or_insert_with(|| ReportRow {
         key,
         usage: Usage::default(),
         models: BTreeMap::new(),
@@ -77,12 +87,21 @@ pub fn aggregate_usage(
     group_by: GroupBy,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
+    split_by_model: bool,
 ) -> Vec<ReportRow> {
     let mut rows = BTreeMap::<String, ReportRow>::new();
 
     for session in sessions {
         for event in &session.events {
-            accumulate_event(&mut rows, event, timezone, &group_by, since, until);
+            accumulate_event(
+                &mut rows,
+                event,
+                timezone,
+                &group_by,
+                since,
+                until,
+                split_by_model,
+            );
         }
     }
 
@@ -206,11 +225,76 @@ mod tests {
             ],
         }];
 
-        let rows = aggregate_usage(&sessions, chrono_tz::Asia::Seoul, GroupBy::Day, None, None);
+        let rows = aggregate_usage(
+            &sessions,
+            chrono_tz::Asia::Seoul,
+            GroupBy::Day,
+            None,
+            None,
+            false,
+        );
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].key, "2026-03-06");
         assert_eq!(rows[0].usage.input_tokens, 300);
         assert_eq!(rows[0].usage.total_tokens, 330);
+    }
+
+    #[test]
+    fn splits_daily_rows_by_model_when_requested() {
+        let sessions = vec![SessionSummary {
+            session_id: "2026/03/06/rollout-1".to_string(),
+            session_path: "2026/03/06/rollout-1.jsonl".to_string(),
+            directory: Some("/Users/jaewon/sources/front-web-www".to_string()),
+            events: vec![
+                UsageEvent {
+                    timestamp_unix_ms: Utc
+                        .with_ymd_and_hms(2026, 3, 5, 15, 30, 0)
+                        .single()
+                        .expect("timestamp")
+                        .timestamp_millis(),
+                    model: "gpt-5.2-codex".to_string(),
+                    is_fallback_model: false,
+                    usage: Usage {
+                        input_tokens: 100,
+                        cached_input_tokens: 0,
+                        output_tokens: 10,
+                        reasoning_output_tokens: 0,
+                        total_tokens: 110,
+                    },
+                },
+                UsageEvent {
+                    timestamp_unix_ms: Utc
+                        .with_ymd_and_hms(2026, 3, 5, 16, 30, 0)
+                        .single()
+                        .expect("timestamp")
+                        .timestamp_millis(),
+                    model: "gpt-5.4".to_string(),
+                    is_fallback_model: false,
+                    usage: Usage {
+                        input_tokens: 200,
+                        cached_input_tokens: 0,
+                        output_tokens: 20,
+                        reasoning_output_tokens: 0,
+                        total_tokens: 220,
+                    },
+                },
+            ],
+        }];
+
+        let rows = aggregate_usage(
+            &sessions,
+            chrono_tz::Asia::Seoul,
+            GroupBy::Day,
+            None,
+            None,
+            true,
+        );
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, "2026-03-06");
+        assert_eq!(rows[1].key, "2026-03-06");
+        assert_eq!(rows[0].models.len(), 1);
+        assert_eq!(rows[1].models.len(), 1);
     }
 }

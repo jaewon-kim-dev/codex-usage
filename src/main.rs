@@ -45,6 +45,9 @@ struct Cli {
 
     #[arg(long, global = true)]
     refresh_cache: bool,
+
+    #[arg(long, global = true)]
+    split_by_model: bool,
 }
 
 #[derive(Debug, Subcommand, Clone, Copy)]
@@ -73,11 +76,12 @@ fn run() -> Result<()> {
     let use_full_daily_fast_path = cli.command.is_none()
         && since.is_none()
         && until.is_none()
+        && !cli.split_by_model
         && (cli.refresh_cache || !cache_path.exists());
 
     if use_full_daily_fast_path {
         let rows = scan_full_daily_rows(&session_root, &cache_path, timezone)?;
-        return render_usage_rows("daily", rows, cli.json, &pricing_catalog);
+        return render_usage_rows("daily", rows, cli.json, &pricing_catalog, false);
     }
 
     let sessions = scan_sessions(ScanOptions {
@@ -91,15 +95,31 @@ fn run() -> Result<()> {
     match cli.command.unwrap_or(Command::Daily) {
         Command::Daily => render_usage_rows(
             "daily",
-            aggregate_usage(&sessions, timezone, GroupBy::Day, since, until),
+            aggregate_usage(
+                &sessions,
+                timezone,
+                GroupBy::Day,
+                since,
+                until,
+                cli.split_by_model,
+            ),
             cli.json,
             &pricing_catalog,
+            cli.split_by_model,
         )?,
         Command::Monthly => render_usage_rows(
             "monthly",
-            aggregate_usage(&sessions, timezone, GroupBy::Month, since, until),
+            aggregate_usage(
+                &sessions,
+                timezone,
+                GroupBy::Month,
+                since,
+                until,
+                cli.split_by_model,
+            ),
             cli.json,
             &pricing_catalog,
+            cli.split_by_model,
         )?,
         Command::Sessions => render_session_rows(
             aggregate_sessions(&sessions, timezone, since, until),
@@ -154,6 +174,7 @@ fn render_usage_rows(
     rows: Vec<ReportRow>,
     json_output: bool,
     pricing_catalog: &PricingCatalog,
+    split_by_model: bool,
 ) -> Result<()> {
     if json_output {
         let totals = totals_from_report_rows(&rows, pricing_catalog);
@@ -180,7 +201,7 @@ fn render_usage_rows(
             "monthly" => "Month",
             _ => "Date",
         }),
-        Cell::new("Models"),
+        Cell::new(if split_by_model { "Model" } else { "Models" }),
         Cell::new("Input"),
         Cell::new("Cache"),
         Cell::new("Output"),

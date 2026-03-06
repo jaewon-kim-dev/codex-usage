@@ -181,7 +181,7 @@ pub fn aggregate_session_file(
 ) -> Result<Vec<ReportRow>> {
     let mut rows = BTreeMap::<String, ReportRow>::new();
     let _ = scan_session_file_internal(session_root, file_path, |event| {
-        accumulate_event(&mut rows, &event, timezone, &group_by, since, until);
+        accumulate_event(&mut rows, &event, timezone, &group_by, since, until, false);
     })?;
     Ok(rows.into_values().collect())
 }

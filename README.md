@@ -79,9 +79,13 @@ For most setups, using `PATH` is cleaner than using an alias because every new s
 ```bash
 codex-usage
 codex-usage daily
+codex-usage daily --split-by-model
 codex-usage monthly
+codex-usage monthly --split-by-model
 codex-usage sessions
 ```
+
+Use `--split-by-model` to emit separate daily or monthly rows when multiple models were used in the same period.
 
 ## Performance
 
