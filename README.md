@@ -87,6 +87,13 @@ codex-usage sessions
 
 Use `--split-by-model` to emit separate daily or monthly rows when multiple models were used in the same period.
 
+### Pricing behavior
+
+- `codex-usage` uses the LiteLLM pricing catalog when available.
+- Some model rules are intentionally pinned inside the app before catalog lookup.
+- `gpt-5.3-codex-spark` is always treated as zero-cost.
+- If a model is still unresolved after those steps, `codex-usage` falls back to built-in family defaults.
+
 ## Performance
 
 Based on previous local measurements on the same machine, `codex-usage` was substantially faster than `ccusage-codex` for the JSON daily report path.

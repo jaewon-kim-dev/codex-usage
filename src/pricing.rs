@@ -32,6 +32,12 @@ const GPT_5_4_PRICING: ModelPricing = ModelPricing {
     output_cost_per_million: 15.0,
 };
 
+const ZERO_COST_PRICING: ModelPricing = ModelPricing {
+    input_cost_per_million: 0.0,
+    cached_input_cost_per_million: 0.0,
+    output_cost_per_million: 0.0,
+};
+
 const LITELLM_PRICING_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const DEFAULT_PRICING_CACHE_SUBDIR: &str = "codex-usage";
@@ -101,6 +107,10 @@ fn resolve_model_pricing(
     models: &HashMap<String, LiteLLMModelPricing>,
     model: &str,
 ) -> ModelPricing {
+    if let Some(pricing) = pinned_model_pricing(model) {
+        return pricing;
+    }
+
     if let Some(pricing) = direct_or_prefixed_lookup(models, model) {
         if let Some(resolved) = to_model_pricing(pricing) {
             return resolved;
@@ -108,13 +118,28 @@ fn resolve_model_pricing(
     }
 
     if let Some(alias) = model_alias(model) {
+        if let Some(pricing) = pinned_model_pricing(alias) {
+            return pricing;
+        }
         if let Some(pricing) = direct_or_prefixed_lookup(models, alias) {
             if let Some(resolved) = to_model_pricing(pricing) {
                 return resolved;
             }
         }
+        return fallback_model_pricing(alias);
     }
 
+    fallback_model_pricing(model)
+}
+
+fn pinned_model_pricing(model: &str) -> Option<ModelPricing> {
+    match model {
+        "gpt-5.3-codex-spark" => Some(ZERO_COST_PRICING),
+        _ => None,
+    }
+}
+
+fn fallback_model_pricing(model: &str) -> ModelPricing {
     match model {
         "gpt-5.4" | "gpt-5.4-codex" => GPT_5_4_PRICING,
         "gpt-5.2-codex" | "gpt-5.3-codex" => GPT_5_2_CODEX_PRICING,
@@ -294,6 +319,14 @@ mod tests {
     }
 
     #[test]
+    fn resolves_gpt_5_3_codex_spark_as_zero_cost() {
+        let pricing = pricing_for_model("gpt-5.3-codex-spark");
+        assert_eq!(pricing.input_cost_per_million, 0.0);
+        assert_eq!(pricing.cached_input_cost_per_million, 0.0);
+        assert_eq!(pricing.output_cost_per_million, 0.0);
+    }
+
+    #[test]
     fn calculates_gpt_5_4_usage_cost() {
         let cost = usage_cost_usd(
             &empty_catalog(),
@@ -345,6 +378,41 @@ mod tests {
         );
 
         assert!((cost - 15.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn keeps_gpt_5_3_codex_spark_free_even_with_remote_catalog_data() {
+        let mut models = HashMap::new();
+        models.insert(
+            "gpt-5.3-codex-spark".to_string(),
+            LiteLLMModelPricing {
+                input_cost_per_token: Some(9.9e-6),
+                output_cost_per_token: Some(9.9e-5),
+                cache_read_input_token_cost: Some(9.9e-7),
+            },
+        );
+
+        let pricing = resolve_model_pricing(&models, "gpt-5.3-codex-spark");
+        assert_eq!(pricing.input_cost_per_million, 0.0);
+        assert_eq!(pricing.cached_input_cost_per_million, 0.0);
+        assert_eq!(pricing.output_cost_per_million, 0.0);
+    }
+
+    #[test]
+    fn calculates_zero_cost_for_gpt_5_3_codex_spark_usage() {
+        let cost = usage_cost_usd(
+            &empty_catalog(),
+            "gpt-5.3-codex-spark",
+            &Usage {
+                input_tokens: 1_000_000,
+                cached_input_tokens: 500_000,
+                output_tokens: 1_000_000,
+                reasoning_output_tokens: 0,
+                total_tokens: 2_000_000,
+            },
+        );
+
+        assert!((cost - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
