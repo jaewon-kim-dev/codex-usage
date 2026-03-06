@@ -20,6 +20,8 @@ If you want the Rust toolchain to be available in every new shell, add this to y
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+This is the preferred global setup. If `$HOME/.cargo/bin` is already in your `PATH`, you usually do not need an alias at all.
+
 ### Install `codex-usage`
 
 ```bash
@@ -39,24 +41,36 @@ $HOME/.cargo/bin/codex-usage
 Before using the command, it is worth checking whether your shell resolves `codex-usage` to the Cargo binary, a shell alias, or something else:
 
 ```bash
+type -a codex-usage
 type codex-usage
 command -v codex-usage
 ```
 
 ### If an existing alias overrides the binary
 
-If `codex-usage` is already aliased to another command, remove that alias:
+If `codex-usage` is already aliased to another command, remove that alias in the current shell:
 
 ```bash
 unalias codex-usage
 hash -r
 ```
 
-Or explicitly point the alias to the Cargo-installed binary:
+To make the change persistent for future terminals, remove or replace the alias in your shell profile such as `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish`.
+
+If you still want to keep an alias, note that this command only affects the current terminal session:
 
 ```bash
 alias codex-usage="$HOME/.cargo/bin/codex-usage"
 ```
+
+To make that alias persistent globally for your user, add it to your shell profile and reload the shell:
+
+```bash
+echo 'alias codex-usage="$HOME/.cargo/bin/codex-usage"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+For most setups, using `PATH` is cleaner than using an alias because every new shell will resolve `codex-usage` directly to the installed binary.
 
 ## Usage
 
