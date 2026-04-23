@@ -17,6 +17,22 @@ fn resolves_gpt_5_4_family_pricing() {
 }
 
 #[test]
+fn resolves_gpt_5_4_mini_pricing() {
+    let pricing = pricing_for_model("gpt-5.4-mini");
+    assert_eq!(pricing.input_cost_per_million, 0.75);
+    assert_eq!(pricing.cached_input_cost_per_million, 0.075);
+    assert_eq!(pricing.output_cost_per_million, 4.50);
+}
+
+#[test]
+fn resolves_gpt_5_5_pricing() {
+    let pricing = pricing_for_model("gpt-5.5");
+    assert_eq!(pricing.input_cost_per_million, 5.00);
+    assert_eq!(pricing.cached_input_cost_per_million, 0.50);
+    assert_eq!(pricing.output_cost_per_million, 30.00);
+}
+
+#[test]
 fn resolves_gpt_5_2_codex_family_pricing() {
     let pricing = pricing_for_model("gpt-5.3-codex");
     assert_eq!(pricing.input_cost_per_million, 1.75);

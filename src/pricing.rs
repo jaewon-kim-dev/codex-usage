@@ -32,6 +32,18 @@ const GPT_5_4_PRICING: ModelPricing = ModelPricing {
     output_cost_per_million: 15.0,
 };
 
+const GPT_5_4_MINI_PRICING: ModelPricing = ModelPricing {
+    input_cost_per_million: 0.75,
+    cached_input_cost_per_million: 0.075,
+    output_cost_per_million: 4.50,
+};
+
+const GPT_5_5_PRICING: ModelPricing = ModelPricing {
+    input_cost_per_million: 5.00,
+    cached_input_cost_per_million: 0.50,
+    output_cost_per_million: 30.0,
+};
+
 const ZERO_COST_PRICING: ModelPricing = ModelPricing {
     input_cost_per_million: 0.0,
     cached_input_cost_per_million: 0.0,
@@ -141,6 +153,8 @@ fn pinned_model_pricing(model: &str) -> Option<ModelPricing> {
 
 fn fallback_model_pricing(model: &str) -> ModelPricing {
     match model {
+        "gpt-5.5" => GPT_5_5_PRICING,
+        "gpt-5.4-mini" => GPT_5_4_MINI_PRICING,
         "gpt-5.4" | "gpt-5.4-codex" => GPT_5_4_PRICING,
         "gpt-5.2-codex" | "gpt-5.3-codex" => GPT_5_2_CODEX_PRICING,
         "gpt-5" | "gpt-5-codex" => GPT_5_PRICING,
