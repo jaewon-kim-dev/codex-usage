@@ -1,4 +1,7 @@
-use super::{LineKindHint, line_kind_hint, parse_session_file};
+use super::{
+    DuplicateLineFilter, LineKindHint, line_kind_hint, parse_session_file,
+    parse_session_file_with_duplicate_filter,
+};
 use std::fs;
 
 #[test]
@@ -56,6 +59,59 @@ fn derives_deltas_from_total_token_usage_when_last_usage_is_missing() {
     assert_eq!(summary.events[1].usage.cached_input_tokens, 200);
     assert_eq!(summary.events[1].usage.output_tokens, 60);
     assert_eq!(summary.events[1].usage.total_tokens, 660);
+}
+
+#[test]
+fn suppresses_forked_parent_token_counts_but_keeps_total_usage_delta_baseline() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_dir = temp_dir.path().join("sessions/2026/03/06");
+    fs::create_dir_all(&sessions_dir).expect("create session dir");
+    let parent_path = sessions_dir.join("rollout-parent.jsonl");
+    let child_path = sessions_dir.join("rollout-child.jsonl");
+
+    fs::write(
+        &parent_path,
+        [
+            r#"{"timestamp":"2026-03-05T23:59:00Z","type":"session_meta","payload":{"id":"parent-session","cwd":"/Users/jaewon/sources"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:01Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+        ]
+        .join("\n"),
+    )
+    .expect("write parent file");
+    fs::write(
+        &child_path,
+        [
+            r#"{"timestamp":"2026-03-05T23:59:04Z","type":"session_meta","payload":{"id":"child-session","forked_from_id":"parent-session","cwd":"/Users/jaewon/sources"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:04Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":150,"output_tokens":250,"reasoning_output_tokens":20,"total_tokens":1750}}}}"#,
+        ]
+        .join("\n"),
+    )
+    .expect("write child file");
+
+    let filter = DuplicateLineFilter::from_file(
+        &parent_path,
+        Some(
+            chrono::DateTime::parse_from_rfc3339("2026-03-05T23:59:04Z")
+                .expect("timestamp")
+                .timestamp_millis(),
+        ),
+    )
+    .expect("filter");
+    let summary = parse_session_file_with_duplicate_filter(
+        &temp_dir.path().join("sessions"),
+        &child_path,
+        Some(filter),
+    )
+    .expect("parse");
+
+    assert_eq!(summary.events.len(), 1);
+    assert_eq!(summary.events[0].usage.input_tokens, 500);
+    assert_eq!(summary.events[0].usage.cached_input_tokens, 50);
+    assert_eq!(summary.events[0].usage.output_tokens, 50);
+    assert_eq!(summary.events[0].usage.total_tokens, 550);
 }
 
 #[test]

@@ -6,14 +6,15 @@ use chrono::NaiveDate;
 use chrono_tz::Tz;
 use memchr::memmem;
 use serde::Deserialize;
-use serde_json::value::RawValue;
-use std::collections::BTreeMap;
+use serde_json::{Value, value::RawValue};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 const LEGACY_FALLBACK_MODEL: &str = "gpt-5";
 const EVENT_MSG_PATTERN: &[u8] = br#""type":"event_msg""#;
+const TOKEN_COUNT_PATTERN: &[u8] = br#""type":"token_count""#;
 const TURN_CONTEXT_PATTERN: &[u8] = br#""type":"turn_context""#;
 const SESSION_META_PATTERN: &[u8] = br#""type":"session_meta""#;
 
@@ -35,7 +36,16 @@ struct LineEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct SessionMetaPayload {
+    id: Option<String>,
+    forked_from_id: Option<String>,
     cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionFileIdentity {
+    pub session_id: Option<String>,
+    pub forked_from_id: Option<String>,
+    pub started_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,11 +167,162 @@ fn line_kind_hint(bytes: &[u8]) -> LineKindHint {
     LineKindHint::Other
 }
 
+fn normalized_line_key(trimmed: &[u8]) -> Option<Vec<u8>> {
+    let mut value = serde_json::from_slice::<Value>(trimmed).ok()?;
+    value.as_object_mut()?.remove("timestamp");
+    serde_json::to_vec(&value).ok()
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DuplicateLineFilter {
+    remaining: HashMap<Vec<u8>, usize>,
+}
+
+impl DuplicateLineFilter {
+    pub fn from_file(file_path: &Path, before_or_at_unix_ms: Option<i64>) -> Result<Self> {
+        let file = File::open(file_path).with_context(|| {
+            format!("failed to open parent session file {}", file_path.display())
+        })?;
+        let mut reader = BufReader::new(file);
+        let mut remaining = HashMap::<Vec<u8>, usize>::new();
+        let mut line_buffer = Vec::<u8>::with_capacity(8 * 1024);
+
+        loop {
+            line_buffer.clear();
+            let bytes_read = reader
+                .read_until(b'\n', &mut line_buffer)
+                .with_context(|| {
+                    format!(
+                        "failed to read line from parent session file {}",
+                        file_path.display()
+                    )
+                })?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let trimmed = trim_ascii_whitespace(&line_buffer);
+            if trimmed.is_empty()
+                || line_kind_hint(trimmed) != LineKindHint::EventMsg
+                || memmem::find(trimmed, TOKEN_COUNT_PATTERN).is_none()
+            {
+                continue;
+            }
+
+            let Ok(envelope) = serde_json::from_slice::<LineEnvelope>(trimmed) else {
+                continue;
+            };
+            if envelope.kind != "event_msg" {
+                continue;
+            }
+            if let Some(cutoff) = before_or_at_unix_ms {
+                let Some(timestamp) = envelope.timestamp.as_deref() else {
+                    continue;
+                };
+                let Some(timestamp_unix_ms) = parse_timestamp_unix_ms(timestamp) else {
+                    continue;
+                };
+                if timestamp_unix_ms > cutoff {
+                    continue;
+                }
+            }
+            let Some(payload) = envelope.payload else {
+                continue;
+            };
+            let Ok(event_payload) = serde_json::from_str::<EventPayload>(payload.get()) else {
+                continue;
+            };
+            if event_payload.kind != "token_count" {
+                continue;
+            }
+            if let Some(key) = normalized_line_key(trimmed) {
+                *remaining.entry(key).or_default() += 1;
+            }
+        }
+
+        Ok(Self { remaining })
+    }
+
+    fn consume_if_duplicate(&mut self, trimmed: &[u8]) -> bool {
+        let Some(key) = normalized_line_key(trimmed) else {
+            return false;
+        };
+        let Some(count) = self.remaining.get_mut(&key) else {
+            return false;
+        };
+        if *count == 0 {
+            return false;
+        }
+        *count -= 1;
+        true
+    }
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
+pub fn read_session_file_identity(file_path: &Path) -> Result<SessionFileIdentity> {
+    let file = File::open(file_path)
+        .with_context(|| format!("failed to open session file {}", file_path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut line_buffer = Vec::<u8>::with_capacity(8 * 1024);
+
+    loop {
+        line_buffer.clear();
+        let bytes_read = reader
+            .read_until(b'\n', &mut line_buffer)
+            .with_context(|| format!("failed to read line from {}", file_path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let trimmed = trim_ascii_whitespace(&line_buffer);
+        if trimmed.is_empty() || line_kind_hint(trimmed) != LineKindHint::SessionMeta {
+            continue;
+        }
+
+        let Ok(envelope) = serde_json::from_slice::<LineEnvelope>(trimmed) else {
+            continue;
+        };
+        if envelope.kind != "session_meta" {
+            continue;
+        }
+
+        let Some(payload) = envelope.payload else {
+            continue;
+        };
+        let Ok(meta) = serde_json::from_str::<SessionMetaPayload>(payload.get()) else {
+            continue;
+        };
+
+        return Ok(SessionFileIdentity {
+            session_id: non_empty(meta.id),
+            forked_from_id: non_empty(meta.forked_from_id),
+            started_at_unix_ms: envelope
+                .timestamp
+                .as_deref()
+                .and_then(parse_timestamp_unix_ms),
+        });
+    }
+
+    Ok(SessionFileIdentity::default())
+}
+
 pub fn parse_session_file(session_root: &Path, file_path: &Path) -> Result<SessionSummary> {
+    parse_session_file_with_duplicate_filter(session_root, file_path, None)
+}
+
+pub fn parse_session_file_with_duplicate_filter(
+    session_root: &Path,
+    file_path: &Path,
+    duplicate_filter: Option<DuplicateLineFilter>,
+) -> Result<SessionSummary> {
     let mut events = Vec::new();
-    let (session_path, directory) = scan_session_file_internal(session_root, file_path, |event| {
-        events.push(event);
-    })?;
+    let (session_path, directory) =
+        scan_session_file_internal(session_root, file_path, duplicate_filter, |event| {
+            events.push(event);
+        })?;
 
     Ok(SessionSummary {
         session_id: session_path.trim_end_matches(".jsonl").to_string(),
@@ -179,8 +340,28 @@ pub fn aggregate_session_file(
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
 ) -> Result<Vec<ReportRow>> {
+    aggregate_session_file_with_duplicate_filter(
+        session_root,
+        file_path,
+        timezone,
+        group_by,
+        since,
+        until,
+        None,
+    )
+}
+
+pub fn aggregate_session_file_with_duplicate_filter(
+    session_root: &Path,
+    file_path: &Path,
+    timezone: Tz,
+    group_by: GroupBy,
+    since: Option<NaiveDate>,
+    until: Option<NaiveDate>,
+    duplicate_filter: Option<DuplicateLineFilter>,
+) -> Result<Vec<ReportRow>> {
     let mut rows = BTreeMap::<String, ReportRow>::new();
-    let _ = scan_session_file_internal(session_root, file_path, |event| {
+    let _ = scan_session_file_internal(session_root, file_path, duplicate_filter, |event| {
         accumulate_event(&mut rows, &event, timezone, &group_by, since, until, false);
     })?;
     Ok(rows.into_values().collect())
@@ -189,6 +370,7 @@ pub fn aggregate_session_file(
 fn scan_session_file_internal(
     session_root: &Path,
     file_path: &Path,
+    mut duplicate_filter: Option<DuplicateLineFilter>,
     mut on_event: impl FnMut(UsageEvent),
 ) -> Result<(String, Option<String>)> {
     let relative_path = file_path
@@ -278,6 +460,10 @@ fn scan_session_file_internal(
                 if event_payload.kind != "token_count" {
                     continue;
                 }
+                let is_duplicate_usage_line = duplicate_filter
+                    .as_mut()
+                    .map(|filter| filter.consume_if_duplicate(trimmed))
+                    .unwrap_or(false);
 
                 let info = event_payload.info;
                 let last_usage = info
@@ -299,6 +485,10 @@ fn scan_session_file_internal(
 
                 if let Some(total_usage) = total_usage.as_ref() {
                     previous_totals = Some(total_usage.clone());
+                }
+
+                if is_duplicate_usage_line {
+                    continue;
                 }
 
                 if usage.total_tokens == 0

@@ -1,5 +1,8 @@
 use crate::cache::{load_cache, load_manifest, save_cache, save_manifest};
-use crate::parser::{aggregate_session_file, parse_session_file};
+use crate::parser::{
+    DuplicateLineFilter, aggregate_session_file_with_duplicate_filter,
+    parse_session_file_with_duplicate_filter, read_session_file_identity,
+};
 use crate::report::GroupBy;
 use crate::types::{
     CachedManifestDirectory, CachedManifestFile, CachedSessionSummary, ReportRow, SessionSummary,
@@ -34,6 +37,13 @@ struct DirectoryCandidate {
     relative_dir: String,
     absolute_dir: PathBuf,
     modified_unix_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+struct ChildParentSpec {
+    child_relative_path: String,
+    parent_id: String,
+    child_started_at_unix_ms: Option<i64>,
 }
 
 fn parse_date_from_relative_path(relative_path: &str) -> Option<NaiveDate> {
@@ -330,6 +340,99 @@ fn is_cache_hit(candidate: &FileCandidate, cached: &CachedSessionSummary) -> boo
     candidate.file_size == cached.file_size && candidate.modified_unix_ms == cached.modified_unix_ms
 }
 
+fn find_session_file_by_id(session_root: &Path, session_id: &str) -> Result<Option<PathBuf>> {
+    let suffix = format!("{session_id}.jsonl");
+
+    for entry in WalkDir::new(session_root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .is_some_and(|file_name| file_name.ends_with(&suffix))
+        {
+            continue;
+        }
+
+        let identity = read_session_file_identity(path)?;
+        if identity.session_id.as_deref() == Some(session_id) {
+            return Ok(Some(path.to_path_buf()));
+        }
+    }
+
+    Ok(None)
+}
+
+fn duplicate_filters_for_files(
+    session_root: &Path,
+    files: &[FileCandidate],
+) -> Result<HashMap<String, DuplicateLineFilter>> {
+    let identities = files
+        .par_iter()
+        .map(|candidate| {
+            read_session_file_identity(&candidate.absolute_path).map(|identity| {
+                (
+                    candidate.relative_path.clone(),
+                    candidate.absolute_path.clone(),
+                    identity,
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let parent_paths_by_id = identities
+        .iter()
+        .filter_map(|(_, absolute_path, identity)| {
+            identity
+                .session_id
+                .as_ref()
+                .map(|session_id| (session_id.clone(), absolute_path.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let child_specs = identities
+        .iter()
+        .filter_map(|(relative_path, _, identity)| {
+            identity
+                .forked_from_id
+                .as_ref()
+                .map(|parent_id| ChildParentSpec {
+                    child_relative_path: relative_path.clone(),
+                    parent_id: parent_id.clone(),
+                    child_started_at_unix_ms: identity.started_at_unix_ms,
+                })
+        })
+        .collect::<Vec<_>>();
+
+    let entries = child_specs
+        .par_iter()
+        .map(|spec| {
+            let parent_path = match parent_paths_by_id.get(&spec.parent_id) {
+                Some(path) => Some(path.clone()),
+                None => find_session_file_by_id(session_root, &spec.parent_id)?,
+            };
+            let Some(parent_path) = parent_path else {
+                return Ok(None);
+            };
+
+            let filter =
+                DuplicateLineFilter::from_file(&parent_path, spec.child_started_at_unix_ms)?;
+            Ok(Some((spec.child_relative_path.clone(), filter)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(entries.into_iter().flatten().collect())
+}
+
 pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
     let use_manifest_cache = options.refresh_cache || !options.cache_path.exists();
     let files = discover_files(
@@ -348,6 +451,16 @@ pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
         .into_iter()
         .map(|entry| (entry.session.session_path.clone(), entry))
         .collect::<HashMap<_, _>>();
+    let files_to_parse = files
+        .iter()
+        .filter(|candidate| {
+            cached_by_path
+                .get(&candidate.relative_path)
+                .is_none_or(|cached| !is_cache_hit(candidate, cached))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let duplicate_filters = duplicate_filters_for_files(options.session_root, &files_to_parse)?;
 
     let parsed_entries = files
         .par_iter()
@@ -358,7 +471,11 @@ pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
                 }
             }
 
-            let session = parse_session_file(options.session_root, &candidate.absolute_path)?;
+            let session = parse_session_file_with_duplicate_filter(
+                options.session_root,
+                &candidate.absolute_path,
+                duplicate_filters.get(&candidate.relative_path).cloned(),
+            )?;
             Ok(CachedSessionSummary {
                 file_size: candidate.file_size,
                 modified_unix_ms: candidate.modified_unix_ms,
@@ -381,16 +498,18 @@ pub fn scan_full_daily_rows(
     timezone: chrono_tz::Tz,
 ) -> Result<Vec<ReportRow>> {
     let files = discover_files(session_root, cache_path, None, None, true)?;
+    let duplicate_filters = duplicate_filters_for_files(session_root, &files)?;
     let per_file_rows = files
         .par_iter()
         .map(|candidate| {
-            aggregate_session_file(
+            aggregate_session_file_with_duplicate_filter(
                 session_root,
                 &candidate.absolute_path,
                 timezone,
                 GroupBy::Day,
                 None,
                 None,
+                duplicate_filters.get(&candidate.relative_path).cloned(),
             )
         })
         .collect::<Result<Vec<_>>>()?;
