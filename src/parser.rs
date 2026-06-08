@@ -17,6 +17,7 @@ const EVENT_MSG_PATTERN: &[u8] = br#""type":"event_msg""#;
 const TOKEN_COUNT_PATTERN: &[u8] = br#""type":"token_count""#;
 const TURN_CONTEXT_PATTERN: &[u8] = br#""type":"turn_context""#;
 const SESSION_META_PATTERN: &[u8] = br#""type":"session_meta""#;
+const INHERITED_PREFIX_END_GAP_MS: i64 = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LineKindHint {
@@ -258,6 +259,79 @@ impl DuplicateLineFilter {
     }
 }
 
+#[derive(Debug, Default)]
+struct InheritedPrefixState {
+    first_session_meta_seen: bool,
+    first_session_is_forked: bool,
+    embedded_source_meta_seen: bool,
+    skipping: bool,
+    saw_prefix_token_count: bool,
+    previous_timestamp_unix_ms: Option<i64>,
+}
+
+impl InheritedPrefixState {
+    fn observe_session_meta(
+        &mut self,
+        meta: &SessionMetaPayload,
+        timestamp_unix_ms: Option<i64>,
+    ) -> bool {
+        self.observe_timestamp(timestamp_unix_ms);
+
+        if !self.first_session_meta_seen {
+            self.first_session_meta_seen = true;
+            self.first_session_is_forked = meta
+                .forked_from_id
+                .as_ref()
+                .is_some_and(|id| !id.trim().is_empty());
+            return false;
+        }
+
+        if self.first_session_is_forked && !self.embedded_source_meta_seen {
+            self.embedded_source_meta_seen = true;
+            self.skipping = true;
+            return true;
+        }
+
+        false
+    }
+
+    fn observe_non_token_line(&mut self, timestamp_unix_ms: Option<i64>) {
+        self.end_prefix_if_live_gap(timestamp_unix_ms);
+        self.observe_timestamp(timestamp_unix_ms);
+    }
+
+    fn observe_token_count(&mut self, timestamp_unix_ms: Option<i64>) -> bool {
+        self.end_prefix_if_live_gap(timestamp_unix_ms);
+        let is_prefix = self.skipping;
+        if is_prefix {
+            self.saw_prefix_token_count = true;
+        }
+        self.observe_timestamp(timestamp_unix_ms);
+        is_prefix
+    }
+
+    fn end_prefix_if_live_gap(&mut self, timestamp_unix_ms: Option<i64>) {
+        if !self.skipping || !self.saw_prefix_token_count {
+            return;
+        }
+        let Some(current) = timestamp_unix_ms else {
+            return;
+        };
+        let Some(previous) = self.previous_timestamp_unix_ms else {
+            return;
+        };
+        if current.saturating_sub(previous) > INHERITED_PREFIX_END_GAP_MS {
+            self.skipping = false;
+        }
+    }
+
+    fn observe_timestamp(&mut self, timestamp_unix_ms: Option<i64>) {
+        if let Some(timestamp) = timestamp_unix_ms {
+            self.previous_timestamp_unix_ms = Some(timestamp);
+        }
+    }
+}
+
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
@@ -392,6 +466,7 @@ fn scan_session_file_internal(
     let mut current_model: Option<String> = None;
     let mut current_model_is_fallback = false;
     let mut previous_totals: Option<Usage> = None;
+    let mut inherited_prefix = InheritedPrefixState::default();
     let mut line_buffer = Vec::<u8>::with_capacity(8 * 1024);
 
     loop {
@@ -424,13 +499,27 @@ fn scan_session_file_internal(
 
         match envelope.kind.as_str() {
             "session_meta" => {
+                let timestamp_unix_ms = envelope
+                    .timestamp
+                    .as_deref()
+                    .and_then(parse_timestamp_unix_ms);
                 if let Some(payload) = envelope.payload {
                     if let Ok(meta) = serde_json::from_str::<SessionMetaPayload>(payload.get()) {
-                        directory = meta.cwd.filter(|cwd| !cwd.trim().is_empty()).or(directory);
+                        let embedded_source_meta =
+                            inherited_prefix.observe_session_meta(&meta, timestamp_unix_ms);
+                        if !embedded_source_meta {
+                            directory = meta.cwd.filter(|cwd| !cwd.trim().is_empty()).or(directory);
+                        }
                     }
                 }
             }
             "turn_context" => {
+                inherited_prefix.observe_non_token_line(
+                    envelope
+                        .timestamp
+                        .as_deref()
+                        .and_then(parse_timestamp_unix_ms),
+                );
                 if let Some(payload) = envelope.payload {
                     if let Ok(context) = serde_json::from_str::<TurnContextPayload>(payload.get()) {
                         directory = context
@@ -457,6 +546,12 @@ fn scan_session_file_internal(
                 let Ok(event_payload) = serde_json::from_str::<EventPayload>(payload.get()) else {
                     continue;
                 };
+                let is_inherited_prefix_usage_line = if event_payload.kind == "token_count" {
+                    inherited_prefix.observe_token_count(Some(timestamp_unix_ms))
+                } else {
+                    inherited_prefix.observe_non_token_line(Some(timestamp_unix_ms));
+                    false
+                };
                 if event_payload.kind != "token_count" {
                     continue;
                 }
@@ -475,11 +570,11 @@ fn scan_session_file_internal(
                     .and_then(|info| info.total_token_usage)
                     .map(RawUsage::normalize);
 
-                let Some(usage) = last_usage.or_else(|| {
-                    total_usage
-                        .as_ref()
-                        .map(|current| subtract_usage(current.clone(), previous_totals.clone()))
-                }) else {
+                let Some(usage) = total_usage
+                    .as_ref()
+                    .map(|current| subtract_usage(current.clone(), previous_totals.clone()))
+                    .or(last_usage)
+                else {
                     continue;
                 };
 
@@ -487,7 +582,7 @@ fn scan_session_file_internal(
                     previous_totals = Some(total_usage.clone());
                 }
 
-                if is_duplicate_usage_line {
+                if is_duplicate_usage_line || is_inherited_prefix_usage_line {
                     continue;
                 }
 

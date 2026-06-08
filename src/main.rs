@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT_CODEX_HOME_DIRNAME: &str = ".codex";
 const DEFAULT_SESSIONS_SUBDIR: &str = "sessions";
 const DEFAULT_CACHE_SUBDIR: &str = "codex-usage";
-const DEFAULT_CACHE_FILENAME: &str = "session-cache-v2.bin";
+const DEFAULT_CACHE_FILENAME: &str = "session-cache-v3.bin";
 
 #[derive(Debug, Parser)]
 #[command(name = "codex-usage")]

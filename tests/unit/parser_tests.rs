@@ -62,6 +62,74 @@ fn derives_deltas_from_total_token_usage_when_last_usage_is_missing() {
 }
 
 #[test]
+fn prefers_total_usage_delta_over_repeated_last_usage_reemission() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_dir = temp_dir.path().join("sessions/2026/03/06");
+    fs::create_dir_all(&sessions_dir).expect("create session dir");
+    let file_path = sessions_dir.join("rollout-reemit.jsonl");
+    fs::write(
+        &file_path,
+        [
+            r#"{"timestamp":"2026-03-05T23:59:01Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:03Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:04Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"cached_input_tokens":50,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":550},"total_token_usage":{"input_tokens":1500,"cached_input_tokens":150,"output_tokens":250,"reasoning_output_tokens":30,"total_tokens":1750}}}}"#,
+        ]
+        .join("\n"),
+    )
+    .expect("write session file");
+
+    let summary = parse_session_file(&temp_dir.path().join("sessions"), &file_path).expect("parse");
+
+    assert_eq!(summary.events.len(), 2);
+    assert_eq!(
+        summary
+            .events
+            .iter()
+            .map(|event| event.usage.total_tokens)
+            .sum::<u64>(),
+        1750
+    );
+    assert_eq!(summary.events[1].usage.input_tokens, 500);
+    assert_eq!(summary.events[1].usage.cached_input_tokens, 50);
+}
+
+#[test]
+fn suppresses_forked_embedded_history_prefix_written_with_new_timestamps() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_dir = temp_dir.path().join("sessions/2026/03/06");
+    fs::create_dir_all(&sessions_dir).expect("create session dir");
+    let file_path = sessions_dir.join("rollout-forked.jsonl");
+    fs::write(
+        &file_path,
+        [
+            r#"{"timestamp":"2026-03-05T23:59:00.000Z","type":"session_meta","payload":{"id":"child-session","forked_from_id":"parent-session","cwd":"/Users/jaewon/sources/child"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:00.001Z","type":"session_meta","payload":{"id":"parent-session","cwd":"/Users/jaewon/sources/parent"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:00.002Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:00.003Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:00.004Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"cached_input_tokens":50,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":550},"total_token_usage":{"input_tokens":1500,"cached_input_tokens":150,"output_tokens":250,"reasoning_output_tokens":30,"total_tokens":1750}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:02.000Z","type":"event_msg","payload":{"type":"task_started"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:02.010Z","type":"turn_context","payload":{"cwd":"/Users/jaewon/sources/live","model":"gpt-5.2-codex"}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:02.020Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":600,"cached_input_tokens":100,"output_tokens":100,"reasoning_output_tokens":20,"total_tokens":700},"total_token_usage":{"input_tokens":2100,"cached_input_tokens":250,"output_tokens":350,"reasoning_output_tokens":50,"total_tokens":2450}}}}"#,
+        ]
+        .join("\n"),
+    )
+    .expect("write session file");
+
+    let summary = parse_session_file(&temp_dir.path().join("sessions"), &file_path).expect("parse");
+
+    assert_eq!(
+        summary.directory.as_deref(),
+        Some("/Users/jaewon/sources/live")
+    );
+    assert_eq!(summary.events.len(), 1);
+    assert_eq!(summary.events[0].usage.input_tokens, 600);
+    assert_eq!(summary.events[0].usage.cached_input_tokens, 100);
+    assert_eq!(summary.events[0].usage.output_tokens, 100);
+    assert_eq!(summary.events[0].usage.total_tokens, 700);
+}
+
+#[test]
 fn suppresses_forked_parent_token_counts_but_keeps_total_usage_delta_baseline() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let sessions_dir = temp_dir.path().join("sessions/2026/03/06");
