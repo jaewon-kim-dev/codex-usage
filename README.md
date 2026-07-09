@@ -94,6 +94,16 @@ Use `--split-by-model` to emit separate daily or monthly rows when multiple mode
 - `gpt-5.3-codex-spark` is always treated as zero-cost.
 - If a model is still unresolved after those steps, `codex-usage` falls back to built-in family defaults.
 
+The built-in GPT-5.6 preview prices per 1 million tokens are:
+
+| Model | Input | Cached input | Output |
+| --- | ---: | ---: | ---: |
+| `gpt-5.6-luna` | $1.00 | $0.10 | $6.00 |
+| `gpt-5.6-terra` | $2.50 | $0.25 | $15.00 |
+| `gpt-5.6-sol` | $5.00 | $0.50 | $30.00 |
+
+Codex session logs currently expose cache-read tokens as `cached_input_tokens`, but do not expose a separate cache-write token count. Cost estimates therefore apply the 90% cache-read discount and do not synthesize GPT-5.6 cache-write charges.
+
 ## Performance
 
 Based on previous local measurements on the same machine, `codex-usage` was substantially faster than `ccusage-codex` for the JSON daily report path.

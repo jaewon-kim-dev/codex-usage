@@ -44,6 +44,24 @@ const GPT_5_5_PRICING: ModelPricing = ModelPricing {
     output_cost_per_million: 30.0,
 };
 
+const GPT_5_6_LUNA_PRICING: ModelPricing = ModelPricing {
+    input_cost_per_million: 1.00,
+    cached_input_cost_per_million: 0.10,
+    output_cost_per_million: 6.00,
+};
+
+const GPT_5_6_TERRA_PRICING: ModelPricing = ModelPricing {
+    input_cost_per_million: 2.50,
+    cached_input_cost_per_million: 0.25,
+    output_cost_per_million: 15.00,
+};
+
+const GPT_5_6_SOL_PRICING: ModelPricing = ModelPricing {
+    input_cost_per_million: 5.00,
+    cached_input_cost_per_million: 0.50,
+    output_cost_per_million: 30.00,
+};
+
 const ZERO_COST_PRICING: ModelPricing = ModelPricing {
     input_cost_per_million: 0.0,
     cached_input_cost_per_million: 0.0,
@@ -153,6 +171,9 @@ fn pinned_model_pricing(model: &str) -> Option<ModelPricing> {
 
 fn fallback_model_pricing(model: &str) -> ModelPricing {
     match model {
+        "gpt-5.6-luna" => GPT_5_6_LUNA_PRICING,
+        "gpt-5.6-terra" => GPT_5_6_TERRA_PRICING,
+        "gpt-5.6-sol" => GPT_5_6_SOL_PRICING,
         "gpt-5.5" => GPT_5_5_PRICING,
         "gpt-5.4-mini" => GPT_5_4_MINI_PRICING,
         "gpt-5.4" | "gpt-5.4-codex" => GPT_5_4_PRICING,

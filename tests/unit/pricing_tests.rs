@@ -33,6 +33,43 @@ fn resolves_gpt_5_5_pricing() {
 }
 
 #[test]
+fn resolves_gpt_5_6_family_pricing() {
+    for (model, input, cached_input, output) in [
+        ("gpt-5.6-luna", 1.00, 0.10, 6.00),
+        ("gpt-5.6-terra", 2.50, 0.25, 15.00),
+        ("gpt-5.6-sol", 5.00, 0.50, 30.00),
+    ] {
+        let pricing = pricing_for_model(model);
+        assert_eq!(pricing.input_cost_per_million, input, "{model}");
+        assert_eq!(
+            pricing.cached_input_cost_per_million, cached_input,
+            "{model}"
+        );
+        assert_eq!(pricing.output_cost_per_million, output, "{model}");
+    }
+}
+
+#[test]
+fn calculates_gpt_5_6_family_usage_cost() {
+    let usage = Usage {
+        input_tokens: 2_000_000,
+        cached_input_tokens: 1_000_000,
+        output_tokens: 1_000_000,
+        reasoning_output_tokens: 0,
+        total_tokens: 3_000_000,
+    };
+
+    for (model, expected) in [
+        ("gpt-5.6-luna", 7.10),
+        ("gpt-5.6-terra", 17.75),
+        ("gpt-5.6-sol", 35.50),
+    ] {
+        let cost = usage_cost_usd(&empty_catalog(), model, &usage);
+        assert!((cost - expected).abs() < f64::EPSILON, "{model}");
+    }
+}
+
+#[test]
 fn resolves_gpt_5_2_codex_family_pricing() {
     let pricing = pricing_for_model("gpt-5.3-codex");
     assert_eq!(pricing.input_cost_per_million, 1.75);
