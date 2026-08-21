@@ -10,7 +10,7 @@ fn empty_catalog() -> PricingCatalog {
 }
 
 fn resolved_pricing(model: &str) -> super::ModelPricing {
-    pricing_for_model(model).expect("known model pricing")
+    pricing_for_model(model)
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn calculates_gpt_5_6_family_usage_cost() {
         ("gpt-5.6-terra", 17.75),
         ("gpt-5.6-sol", 35.50),
     ] {
-        let cost = usage_cost_usd(&empty_catalog(), model, &usage).expect("known model cost");
+        let cost = usage_cost_usd(&empty_catalog(), model, &usage);
         assert!((cost - expected).abs() < f64::EPSILON, "{model}");
     }
 }
@@ -102,8 +102,7 @@ fn calculates_gpt_5_4_usage_cost() {
             reasoning_output_tokens: 0,
             total_tokens: 3_000_000,
         },
-    )
-    .expect("known model cost");
+    );
 
     assert!((cost - 15.25).abs() < f64::EPSILON);
 }
@@ -120,8 +119,7 @@ fn does_not_double_count_cached_input_tokens() {
             reasoning_output_tokens: 0,
             total_tokens: 1_500,
         },
-    )
-    .expect("known model cost");
+    );
 
     let expected =
         (800.0 / 1_000_000.0) * 1.25 + (200.0 / 1_000_000.0) * 0.125 + (500.0 / 1_000_000.0) * 10.0;
@@ -129,8 +127,12 @@ fn does_not_double_count_cached_input_tokens() {
 }
 
 #[test]
-fn leaves_unknown_model_pricing_unresolved() {
-    assert!(pricing_for_model("gpt-unknown-codex").is_none());
+fn prices_unknown_models_at_zero_cost() {
+    let pricing = pricing_for_model("gpt-unknown-codex");
+
+    assert_eq!(pricing.input_cost_per_million, 0.0);
+    assert_eq!(pricing.cached_input_cost_per_million, 0.0);
+    assert_eq!(pricing.output_cost_per_million, 0.0);
 }
 
 #[test]
@@ -145,7 +147,7 @@ fn keeps_gpt_5_3_codex_spark_free_even_with_remote_catalog_data() {
         },
     );
 
-    let pricing = resolve_model_pricing(&models, "gpt-5.3-codex-spark").expect("pinned pricing");
+    let pricing = resolve_model_pricing(&models, "gpt-5.3-codex-spark");
     assert_eq!(pricing.input_cost_per_million, 0.0);
     assert_eq!(pricing.cached_input_cost_per_million, 0.0);
     assert_eq!(pricing.output_cost_per_million, 0.0);
@@ -163,8 +165,7 @@ fn calculates_zero_cost_for_gpt_5_3_codex_spark_usage() {
             reasoning_output_tokens: 0,
             total_tokens: 2_000_000,
         },
-    )
-    .expect("known model cost");
+    );
 
     assert!((cost - 0.0).abs() < f64::EPSILON);
 }
@@ -181,7 +182,7 @@ fn uses_remote_alias_pricing_for_gpt_5_3_codex() {
         },
     );
 
-    let pricing = resolve_model_pricing(&models, "gpt-5.3-codex").expect("alias pricing");
+    let pricing = resolve_model_pricing(&models, "gpt-5.3-codex");
     assert_eq!(pricing.input_cost_per_million, 1.9);
     assert_eq!(pricing.cached_input_cost_per_million, 0.19);
     assert_eq!(pricing.output_cost_per_million, 15.0);
@@ -207,7 +208,7 @@ fn does_not_fuzzily_match_other_model_names() {
         },
     );
 
-    let pricing = resolve_model_pricing(&models, "gpt-5").expect("remote pricing");
+    let pricing = resolve_model_pricing(&models, "gpt-5");
     assert_eq!(pricing.input_cost_per_million, 1.25);
     assert_eq!(pricing.output_cost_per_million, 10.0);
 }
@@ -233,7 +234,7 @@ fn decodes_litellm_raw_catalog_fields_from_provider_fixture() {
     ))
     .expect("decode provider fixture");
 
-    let pricing = resolve_model_pricing(&models, "gpt-5.4").expect("provider pricing");
+    let pricing = resolve_model_pricing(&models, "gpt-5.4");
     assert_eq!(pricing.input_cost_per_million, 2.5);
     assert_eq!(pricing.cached_input_cost_per_million, 0.25);
     assert_eq!(pricing.output_cost_per_million, 15.0);

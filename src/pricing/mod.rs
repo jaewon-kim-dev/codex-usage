@@ -70,36 +70,36 @@ const ZERO_COST_PRICING: ModelPricing = ModelPricing {
 };
 
 impl PricingCatalog {
-    pub fn pricing_for_model(&self, model: &str) -> Option<ModelPricing> {
+    pub fn pricing_for_model(&self, model: &str) -> ModelPricing {
         resolve_model_pricing(&self.models, model)
     }
 }
 
-pub fn pricing_for_model(model: &str) -> Option<ModelPricing> {
+pub fn pricing_for_model(model: &str) -> ModelPricing {
     resolve_model_pricing(&HashMap::new(), model)
 }
 
 fn resolve_model_pricing(
     models: &HashMap<String, LiteLLMModelPricing>,
     model: &str,
-) -> Option<ModelPricing> {
+) -> ModelPricing {
     if let Some(pricing) = pinned_model_pricing(model) {
-        return Some(pricing);
+        return pricing;
     }
 
     if let Some(pricing) = direct_or_prefixed_lookup(models, model) {
         if let Some(resolved) = to_model_pricing(pricing) {
-            return Some(resolved);
+            return resolved;
         }
     }
 
     if let Some(alias) = model_alias(model) {
         if let Some(pricing) = pinned_model_pricing(alias) {
-            return Some(pricing);
+            return pricing;
         }
         if let Some(pricing) = direct_or_prefixed_lookup(models, alias) {
             if let Some(resolved) = to_model_pricing(pricing) {
-                return Some(resolved);
+                return resolved;
             }
         }
         return fallback_model_pricing(alias);
@@ -115,8 +115,8 @@ fn pinned_model_pricing(model: &str) -> Option<ModelPricing> {
     }
 }
 
-fn fallback_model_pricing(model: &str) -> Option<ModelPricing> {
-    Some(match model {
+fn fallback_model_pricing(model: &str) -> ModelPricing {
+    match model {
         "gpt-5.6-luna" => GPT_5_6_LUNA_PRICING,
         "gpt-5.6-terra" => GPT_5_6_TERRA_PRICING,
         "gpt-5.6-sol" => GPT_5_6_SOL_PRICING,
@@ -125,8 +125,8 @@ fn fallback_model_pricing(model: &str) -> Option<ModelPricing> {
         "gpt-5.4" | "gpt-5.4-codex" => GPT_5_4_PRICING,
         "gpt-5.2-codex" | "gpt-5.3-codex" => GPT_5_2_CODEX_PRICING,
         "gpt-5" | "gpt-5-codex" => GPT_5_PRICING,
-        _ => return None,
-    })
+        _ => ZERO_COST_PRICING,
+    }
 }
 
 fn direct_or_prefixed_lookup<'a>(
@@ -183,26 +183,22 @@ fn to_model_pricing(pricing: &LiteLLMModelPricing) -> Option<ModelPricing> {
     })
 }
 
-pub fn usage_cost_usd(catalog: &PricingCatalog, model: &str, usage: &Usage) -> Option<f64> {
-    let pricing = catalog.pricing_for_model(model)?;
+pub fn usage_cost_usd(catalog: &PricingCatalog, model: &str, usage: &Usage) -> f64 {
+    let pricing = catalog.pricing_for_model(model);
 
     let cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
     let non_cached_input_tokens = usage.input_tokens.saturating_sub(cached_input_tokens);
 
-    Some(
-        (non_cached_input_tokens as f64 / 1_000_000.0) * pricing.input_cost_per_million
-            + (cached_input_tokens as f64 / 1_000_000.0) * pricing.cached_input_cost_per_million
-            + (usage.output_tokens as f64 / 1_000_000.0) * pricing.output_cost_per_million,
-    )
+    (non_cached_input_tokens as f64 / 1_000_000.0) * pricing.input_cost_per_million
+        + (cached_input_tokens as f64 / 1_000_000.0) * pricing.cached_input_cost_per_million
+        + (usage.output_tokens as f64 / 1_000_000.0) * pricing.output_cost_per_million
 }
 
-pub fn totals_cost_usd(
-    catalog: &PricingCatalog,
-    models: &BTreeMap<String, ModelTotals>,
-) -> Option<f64> {
-    models.iter().try_fold(0.0, |total, (model, totals)| {
-        Some(total + usage_cost_usd(catalog, model, &totals.usage)?)
-    })
+pub fn totals_cost_usd(catalog: &PricingCatalog, models: &BTreeMap<String, ModelTotals>) -> f64 {
+    models
+        .iter()
+        .map(|(model, totals)| usage_cost_usd(catalog, model, &totals.usage))
+        .sum()
 }
 
 #[cfg(test)]

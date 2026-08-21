@@ -93,7 +93,7 @@ Use `--split-by-model` to emit separate daily or monthly rows when multiple mode
 - Some model rules are intentionally pinned inside the app before catalog lookup.
 - `gpt-5.3-codex-spark` is always treated as zero-cost.
 - Known model families can use pinned built-in prices when the remote catalog is unavailable.
-- Unknown or missing models are reported as unresolved instead of being assigned another model's price. Table output shows `N/A`; JSON emits `null` for an unresolved aggregate cost.
+- Unknown or missing models remain labeled as `unknown`, and their input, cached-input, and output prices are all treated as zero. Table and JSON totals therefore include them at `$0.0000` without guessing another model's price.
 
 The built-in GPT-5.6 preview prices per 1 million tokens are:
 

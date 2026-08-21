@@ -339,10 +339,8 @@ fn format_activity(timestamp_unix_ms: i64, timezone: Tz) -> String {
         .to_string()
 }
 
-fn format_cost(cost_usd: Option<f64>) -> String {
-    cost_usd
-        .map(|cost| format!("${cost:.4}"))
-        .unwrap_or_else(|| "N/A".to_string())
+fn format_cost(cost_usd: f64) -> String {
+    format!("${cost_usd:.4}")
 }
 
 fn format_number(value: u64) -> String {

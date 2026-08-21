@@ -58,7 +58,7 @@ pub(super) struct TotalsPayload {
     pub(super) output_tokens: u64,
     pub(super) reasoning_output_tokens: u64,
     pub(super) total_tokens: u64,
-    pub(super) cost_usd: Option<f64>,
+    pub(super) cost_usd: f64,
 }
 
 #[derive(serde::Serialize)]
@@ -153,7 +153,7 @@ impl Default for TotalsPayload {
             output_tokens: 0,
             reasoning_output_tokens: 0,
             total_tokens: 0,
-            cost_usd: Some(0.0),
+            cost_usd: 0.0,
         }
     }
 }
@@ -168,10 +168,7 @@ impl TotalsPayload {
         self.total_tokens += usage.total_tokens;
     }
 
-    fn add_cost(&mut self, cost_usd: Option<f64>) {
-        self.cost_usd = self
-            .cost_usd
-            .zip(cost_usd)
-            .map(|(total, row_cost)| total + row_cost);
+    fn add_cost(&mut self, cost_usd: f64) {
+        self.cost_usd += cost_usd;
     }
 }
