@@ -73,11 +73,7 @@ fn run() -> Result<()> {
     let session_root = codex_home.join(DEFAULT_SESSIONS_SUBDIR);
     let cache_path = resolve_cache_path(cli.cache_path.as_deref())?;
     let pricing_catalog = PricingCatalog::load()?;
-    let use_full_daily_fast_path = cli.command.is_none()
-        && since.is_none()
-        && until.is_none()
-        && !cli.split_by_model
-        && (cli.refresh_cache || !cache_path.exists());
+    let use_full_daily_fast_path = should_use_full_daily_fast_path(&cli, &cache_path);
 
     if use_full_daily_fast_path {
         let rows = scan_full_daily_rows(&session_root, &cache_path, timezone)?;
@@ -130,6 +126,15 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn should_use_full_daily_fast_path(cli: &Cli, cache_path: &Path) -> bool {
+    cli.command.is_none()
+        && cli.since.is_none()
+        && cli.until.is_none()
+        && !cli.split_by_model
+        && !cli.refresh_cache
+        && !cache_path.exists()
 }
 
 fn parse_filter_date(value: Option<&str>) -> Result<Option<NaiveDate>> {

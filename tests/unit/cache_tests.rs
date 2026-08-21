@@ -1,8 +1,9 @@
-use super::{load_cache, load_manifest, save_cache, save_manifest};
+use super::{load_cache, load_manifest, save_cache, save_manifest, write_atomically};
 use crate::types::{
     CachedManifestDirectory, CachedManifestFile, CachedSessionSummary, SessionSummary, Usage,
     UsageEvent,
 };
+use std::io::{self, Write};
 
 #[test]
 fn roundtrips_cached_session_summaries() {
@@ -54,4 +55,42 @@ fn roundtrips_manifest_entries() {
     let restored = load_manifest(&manifest_path).expect("load manifest");
 
     assert_eq!(restored, vec![entry]);
+}
+
+#[test]
+fn treats_corrupt_binary_caches_as_empty() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let cache_path = temp_dir.path().join("session-cache.bin");
+    let manifest_path = temp_dir.path().join("manifest-cache.bin");
+    std::fs::write(&cache_path, []).expect("write corrupt session cache");
+    std::fs::write(&manifest_path, []).expect("write corrupt manifest cache");
+
+    assert!(
+        load_cache(&cache_path)
+            .expect("load session cache")
+            .is_empty()
+    );
+    assert!(
+        load_manifest(&manifest_path)
+            .expect("load manifest cache")
+            .is_empty()
+    );
+}
+
+#[test]
+fn preserves_existing_cache_when_replacement_write_fails() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let cache_path = temp_dir.path().join("session-cache.bin");
+    std::fs::write(&cache_path, b"valid cache").expect("write existing cache");
+
+    let result = write_atomically(&cache_path, |file| {
+        file.write_all(b"partial replacement")?;
+        Err(io::Error::other("simulated write failure"))
+    });
+
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read(&cache_path).expect("read existing cache"),
+        b"valid cache"
+    );
 }
