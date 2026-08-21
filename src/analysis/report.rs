@@ -73,10 +73,7 @@ pub fn accumulate_event(
     });
     row.usage.add_assign(&event.usage);
 
-    let model_totals = row
-        .models
-        .entry(event.model.clone())
-        .or_insert_with(ModelTotals::default);
+    let model_totals = row.models.entry(event.model.clone()).or_default();
     model_totals.usage.add_assign(&event.usage);
     model_totals.is_fallback |= event.is_fallback_model;
 }
@@ -134,9 +131,7 @@ pub fn aggregate_sessions(
             }
 
             usage.add_assign(&event.usage);
-            let model_totals = models
-                .entry(event.model.clone())
-                .or_insert_with(ModelTotals::default);
+            let model_totals = models.entry(event.model.clone()).or_default();
             model_totals.usage.add_assign(&event.usage);
             model_totals.is_fallback |= event.is_fallback_model;
 
@@ -178,5 +173,5 @@ pub fn aggregate_sessions(
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/report_tests.rs"]
+#[path = "../../tests/unit/report_tests.rs"]
 mod tests;

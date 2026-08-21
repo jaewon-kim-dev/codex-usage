@@ -2,7 +2,7 @@
 
 Fast Codex usage analyzer written in Rust.
 
-<img width="1268" height="535" alt="image" src="https://github.com/user-attachments/assets/18072c86-b15d-4e3f-a2a5-8dc0eb440644" />
+![codex-usage daily report](output/playwright/codex-usage-readme.png)
 
 
 ## Setup
@@ -27,7 +27,7 @@ This is the preferred global setup. If `$HOME/.cargo/bin` is already in your `PA
 ```bash
 git clone <your-repo-url>
 cd codex-usage
-cargo install --path .
+cargo install --locked --path .
 ```
 
 By default, Cargo installs the binary to:
@@ -92,7 +92,8 @@ Use `--split-by-model` to emit separate daily or monthly rows when multiple mode
 - `codex-usage` uses the LiteLLM pricing catalog when available.
 - Some model rules are intentionally pinned inside the app before catalog lookup.
 - `gpt-5.3-codex-spark` is always treated as zero-cost.
-- If a model is still unresolved after those steps, `codex-usage` falls back to built-in family defaults.
+- Known model families can use pinned built-in prices when the remote catalog is unavailable.
+- Unknown or missing models are reported as unresolved instead of being assigned another model's price. Table output shows `N/A`; JSON emits `null` for an unresolved aggregate cost.
 
 The built-in GPT-5.6 preview prices per 1 million tokens are:
 
@@ -106,13 +107,7 @@ Codex session logs currently expose cache-read tokens as `cached_input_tokens`, 
 
 ## Performance
 
-Based on previous local measurements on the same machine, `codex-usage` was substantially faster than `ccusage-codex` for the JSON daily report path.
-
-- `codex-usage daily --json --refresh-cache`: about `3.27s`
-- `codex-usage daily --json`: about `0.42s`
-- `ccusage-codex daily --json`: about `109.93s`
-
-In those runs, `codex-usage` was roughly `33x` faster on a cold run and about `260x` faster on a warm run.
+The session cache is incremental. A warm run reuses unchanged session summaries without rewriting the cache file, while changed or newly discovered JSONL files are parsed again. Date-filtered reports preserve cached sessions outside the requested window.
 
 ### Why it is faster
 
@@ -123,8 +118,10 @@ In those runs, `codex-usage` was roughly `33x` faster on a cold run and about `2
 - It only parses the event types needed for usage accounting.
 - It avoids expensive global event reshuffling and aggregates usage directly during scanning.
 - It processes session files in parallel with Rayon.
-- It keeps binary cache files for parsed session summaries, so repeated runs can reuse unchanged files.
+- It keeps an atomic binary cache of parsed session summaries, so repeated runs can move cache hits without deep-cloning or rewriting the full cache.
 - It narrows the candidate file set early when date filters are provided.
+
+The cache format is versioned. Incompatible parser changes use a new cache filename and rebuild from the source JSONL files.
 
 ### Date filters
 
@@ -146,6 +143,8 @@ codex-usage --refresh-cache
 codex-usage daily --refresh-cache
 ```
 
+Both forms rebuild the reusable session cache.
+
 ### Custom Codex home
 
 ```bash
@@ -158,4 +157,24 @@ You can also set `CODEX_HOME` in your shell environment.
 
 ```bash
 codex-usage daily --timezone UTC
+```
+
+## Demo and verification
+
+The README image is rendered from the checked-in demo sessions:
+
+```bash
+cargo run --locked -- daily \
+  --timezone Asia/Seoul \
+  --codex-home examples/demo-codex-home \
+  --cache-path /tmp/codex-usage-demo-cache.bin \
+  --refresh-cache
+```
+
+The repository CI runs the following contracts on `master` and pull requests:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
 ```

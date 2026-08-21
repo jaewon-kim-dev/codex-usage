@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>codex-usage CLI</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 1400px; height: 650px; overflow: hidden; }
+      body {
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 18% 12%, #293141 0, #11151d 44%, #080a0f 100%);
+        color: #f4f7fb;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      }
+      .terminal {
+        width: 1320px;
+        border: 1px solid #394253;
+        border-radius: 16px;
+        overflow: hidden;
+        background: rgba(10, 13, 19, 0.96);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+      }
+      .titlebar {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 18px;
+        border-bottom: 1px solid #2b3240;
+        background: #171c26;
+      }
+      .dot { width: 12px; height: 12px; border-radius: 50%; }
+      .red { background: #ff5f57; }
+      .yellow { background: #febc2e; }
+      .green { background: #28c840; }
+      .label { margin-left: auto; color: #9aa5b5; font-size: 13px; }
+      pre {
+        margin: 0;
+        padding: 26px 30px 30px;
+        font-size: 16px;
+        line-height: 1.46;
+        letter-spacing: -0.2px;
+        white-space: pre;
+      }
+      .prompt { color: #79d8a5; }
+      .command { color: #dce8ff; }
+      .table { color: #f2f5fa; }
+    </style>
+  </head>
+  <body>
+    <main class="terminal">
+      <header class="titlebar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <span class="label">codex-usage</span>
+      </header>
+      <pre><span class="prompt">❯</span> <span class="command">codex-usage daily --timezone Asia/Seoul</span>
+
+<span class="table">┌────────────┬──────────────┬───────────┬─────────┬────────┬───────────┬───────────┬────────────┐
+│ Date       ┆ Models       ┆ Input     ┆ Cache   ┆ Output ┆ Reasoning ┆ Total     ┆ Cost (USD) │
+╞════════════╪══════════════╪═══════════╪═════════╪════════╪═══════════╪═══════════╪════════════╡
+│ 2026-08-20 ┆ gpt-5.4      ┆ 1,000,000 ┆ 250,000 ┆ 50,000 ┆ 12,000    ┆ 1,300,000 ┆ $3.3125    │
+├╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 2026-08-21 ┆ gpt-5.6-luna ┆ 600,000   ┆ 200,000 ┆ 40,000 ┆ 8,000     ┆ 840,000   ┆ $0.1720    │
+├╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Total      ┆              ┆ 1,600,000 ┆ 450,000 ┆ 90,000 ┆ 20,000    ┆ 2,140,000 ┆ $3.4845    │
+└────────────┴──────────────┴───────────┴─────────┴────────┴───────────┴───────────┴────────────┘</span></pre>
+    </main>
+  </body>
+</html>

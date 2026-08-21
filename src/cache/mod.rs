@@ -1,10 +1,16 @@
-use crate::types::{CachedManifestDirectory, CachedSessionSummary};
+use crate::types::CachedSessionSummary;
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 
-fn write_atomically(
+pub(crate) struct CacheLoad<T> {
+    pub(crate) entries: T,
+    pub(crate) needs_rewrite: bool,
+}
+
+pub(crate) fn write_atomically(
     cache_path: &Path,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
@@ -16,7 +22,10 @@ fn write_atomically(
     Ok(())
 }
 
-pub fn save_cache(cache_path: &Path, entries: &[CachedSessionSummary]) -> Result<()> {
+pub fn save_cache<T>(cache_path: &Path, entries: &T) -> Result<()>
+where
+    T: Serialize + ?Sized,
+{
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create cache directory {}", parent.display()))?;
@@ -30,46 +39,32 @@ pub fn save_cache(cache_path: &Path, entries: &[CachedSessionSummary]) -> Result
 }
 
 pub fn load_cache(cache_path: &Path) -> Result<Vec<CachedSessionSummary>> {
+    Ok(load_cache_state(cache_path)?.entries)
+}
+
+pub(crate) fn load_cache_state(cache_path: &Path) -> Result<CacheLoad<Vec<CachedSessionSummary>>> {
     if !cache_path.exists() {
-        return Ok(Vec::new());
+        return Ok(CacheLoad {
+            entries: Vec::new(),
+            needs_rewrite: true,
+        });
     }
 
     let bytes = fs::read(cache_path)
         .with_context(|| format!("failed to read cache file {}", cache_path.display()))?;
     let Ok((entries, _)) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
     else {
-        return Ok(Vec::new());
+        return Ok(CacheLoad {
+            entries: Vec::new(),
+            needs_rewrite: true,
+        });
     };
-    Ok(entries)
-}
-
-pub fn save_manifest(manifest_path: &Path, entries: &[CachedManifestDirectory]) -> Result<()> {
-    if let Some(parent) = manifest_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create cache directory {}", parent.display()))?;
-    }
-
-    let encoded = bincode::serde::encode_to_vec(entries, bincode::config::standard())
-        .context("failed to encode manifest entries")?;
-    write_atomically(manifest_path, |file| file.write_all(&encoded))
-        .with_context(|| format!("failed to write manifest file {}", manifest_path.display()))?;
-    Ok(())
-}
-
-pub fn load_manifest(manifest_path: &Path) -> Result<Vec<CachedManifestDirectory>> {
-    if !manifest_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let bytes = fs::read(manifest_path)
-        .with_context(|| format!("failed to read manifest file {}", manifest_path.display()))?;
-    let Ok((entries, _)) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-    else {
-        return Ok(Vec::new());
-    };
-    Ok(entries)
+    Ok(CacheLoad {
+        entries,
+        needs_rewrite: false,
+    })
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/cache_tests.rs"]
+#[path = "../../tests/unit/cache_tests.rs"]
 mod tests;

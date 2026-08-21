@@ -1,7 +1,7 @@
-use super::{Cli, report_row_payloads, should_use_full_daily_fast_path, totals_from_report_rows};
+use super::{Cli, report_row_payloads, run_with_cli, totals_from_report_rows};
+use crate::pricing::PricingCatalog;
+use crate::types::{ReportRow, Usage};
 use clap::Parser;
-use codex_usage::pricing::PricingCatalog;
-use codex_usage::types::{ReportRow, Usage};
 use std::collections::BTreeMap;
 
 #[test]
@@ -50,7 +50,41 @@ fn reports_totals_with_billable_and_raw_input_tokens() {
 fn refresh_cache_uses_the_session_cache_rebuild_path() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let cache_path = temp_dir.path().join("session-cache.bin");
-    let cli = Cli::try_parse_from(["codex-usage", "--refresh-cache"]).expect("parse cli");
+    let codex_home = temp_dir.path().join("codex-home");
+    std::fs::create_dir_all(codex_home.join("sessions")).expect("sessions");
+    let cli = Cli::try_parse_from([
+        "codex-usage",
+        "--refresh-cache",
+        "--json",
+        "--codex-home",
+        codex_home.to_str().expect("codex home"),
+        "--cache-path",
+        cache_path.to_str().expect("cache path"),
+    ])
+    .expect("parse cli");
 
-    assert!(!should_use_full_daily_fast_path(&cli, &cache_path));
+    run_with_cli(cli, &PricingCatalog::default()).expect("run cli");
+
+    assert!(cache_path.exists());
+}
+
+#[test]
+fn first_default_run_uses_the_session_cache_build_path() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let cache_path = temp_dir.path().join("missing-session-cache.bin");
+    let codex_home = temp_dir.path().join("codex-home");
+    std::fs::create_dir_all(codex_home.join("sessions")).expect("sessions");
+    let cli = Cli::try_parse_from([
+        "codex-usage",
+        "--json",
+        "--codex-home",
+        codex_home.to_str().expect("codex home"),
+        "--cache-path",
+        cache_path.to_str().expect("cache path"),
+    ])
+    .expect("parse cli");
+
+    run_with_cli(cli, &PricingCatalog::default()).expect("run cli");
+
+    assert!(cache_path.exists());
 }

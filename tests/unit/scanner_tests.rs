@@ -1,55 +1,7 @@
-use super::{ScanOptions, discover_files, manifest_path_for, scan_full_daily_rows, scan_sessions};
+use super::{ScanOptions, scan_sessions};
+use crate::cache::load_cache;
 use chrono::NaiveDate;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::Duration;
-
-#[test]
-fn reuses_manifest_file_path_next_to_session_cache() {
-    let manifest_path = manifest_path_for(Path::new("/tmp/session-cache-v1.bin"));
-    assert_eq!(
-        manifest_path,
-        PathBuf::from("/tmp/session-cache-v1-manifest.bin")
-    );
-}
-
-#[test]
-fn discovers_files_and_populates_manifest() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let session_root = temp_dir.path().join("sessions");
-    let day_dir = session_root.join("2026/03/06");
-    fs::create_dir_all(&day_dir).expect("mkdirs");
-    fs::write(day_dir.join("rollout-1.jsonl"), "{}\n").expect("write file");
-    let cache_path = temp_dir.path().join("session-cache.bin");
-
-    let files = discover_files(&session_root, &cache_path, None, None, true).expect("discover");
-
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].relative_path, "2026/03/06/rollout-1.jsonl");
-    assert!(manifest_path_for(&cache_path).exists());
-}
-
-#[test]
-fn refreshes_manifest_file_metadata_for_past_directories() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let session_root = temp_dir.path().join("sessions");
-    let day_dir = session_root.join("2000/01/01");
-    fs::create_dir_all(&day_dir).expect("mkdirs");
-    let file_path = day_dir.join("rollout-1.jsonl");
-    fs::write(&file_path, "{}\n").expect("write file");
-    let cache_path = temp_dir.path().join("session-cache.bin");
-
-    let first = discover_files(&session_root, &cache_path, None, None, true).expect("first");
-    thread::sleep(Duration::from_millis(10));
-    fs::write(&file_path, "{\"a\":1}\n{\"b\":2}\n").expect("rewrite file");
-
-    let second = discover_files(&session_root, &cache_path, None, None, true).expect("second");
-
-    assert_eq!(first.len(), 1);
-    assert_eq!(second.len(), 1);
-    assert!(second[0].file_size > first[0].file_size);
-}
 
 #[test]
 fn filters_parent_history_when_parent_file_is_outside_date_window() {
@@ -104,12 +56,100 @@ fn filters_parent_history_when_parent_file_is_outside_date_window() {
     assert_eq!(sessions[0].events.len(), 1);
     assert_eq!(sessions[0].events[0].usage.total_tokens, 550);
 
-    let rows = scan_full_daily_rows(
-        &session_root,
-        &temp_dir.path().join("daily-session-cache.bin"),
-        chrono_tz::UTC,
-    )
-    .expect("scan full daily rows");
-    let total_tokens = rows.iter().map(|row| row.usage.total_tokens).sum::<u64>();
+    let full_sessions = scan_sessions(ScanOptions {
+        session_root: &session_root,
+        cache_path: &temp_dir.path().join("full-session-cache.bin"),
+        since: None,
+        until: None,
+        refresh_cache: true,
+    })
+    .expect("scan full sessions");
+    let total_tokens = full_sessions
+        .iter()
+        .flat_map(|session| &session.events)
+        .map(|event| event.usage.total_tokens)
+        .sum::<u64>();
     assert_eq!(total_tokens, 1750);
+}
+
+#[test]
+fn date_filtered_scan_preserves_cached_sessions_outside_the_window() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let session_root = temp_dir.path().join("sessions");
+    let cache_path = temp_dir.path().join("session-cache.bin");
+
+    for (date, id) in [
+        ("2026/01/01", "019eeee0-0000-7000-8000-000000000011"),
+        ("2026/03/01", "019eeee0-0000-7000-8000-000000000012"),
+    ] {
+        let day_dir = session_root.join(date);
+        fs::create_dir_all(&day_dir).expect("day dir");
+        fs::write(
+            day_dir.join(format!("rollout-{id}.jsonl")),
+            [
+                format!(
+                    r#"{{"timestamp":"{}T00:00:00Z","type":"session_meta","payload":{{"id":"{id}"}}}}"#,
+                    date.replace('/', "-")
+                ),
+                format!(
+                    r#"{{"timestamp":"{}T00:00:01Z","type":"event_msg","payload":{{"type":"token_count","model":"gpt-5.4","info":{{"last_token_usage":{{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}}}}}}"#,
+                    date.replace('/', "-")
+                ),
+            ]
+            .join("\n"),
+        )
+        .expect("session file");
+    }
+
+    scan_sessions(ScanOptions {
+        session_root: &session_root,
+        cache_path: &cache_path,
+        since: None,
+        until: None,
+        refresh_cache: true,
+    })
+    .expect("full scan");
+
+    scan_sessions(ScanOptions {
+        session_root: &session_root,
+        cache_path: &cache_path,
+        since: Some(NaiveDate::from_ymd_opt(2026, 3, 1).expect("since")),
+        until: Some(NaiveDate::from_ymd_opt(2026, 3, 1).expect("until")),
+        refresh_cache: false,
+    })
+    .expect("filtered scan");
+
+    assert_eq!(load_cache(&cache_path).expect("load cache").len(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn unchanged_warm_scan_does_not_replace_the_session_cache() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let session_root = temp_dir.path().join("sessions");
+    let day_dir = session_root.join("2026/03/01");
+    let cache_path = temp_dir.path().join("session-cache.bin");
+    fs::create_dir_all(&day_dir).expect("day dir");
+    fs::write(
+        day_dir.join("rollout-1.jsonl"),
+        r#"{"timestamp":"2026-03-01T00:00:01Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.4","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}}"#,
+    )
+    .expect("session file");
+
+    let options = || ScanOptions {
+        session_root: &session_root,
+        cache_path: &cache_path,
+        since: None,
+        until: None,
+        refresh_cache: false,
+    };
+    scan_sessions(options()).expect("first scan");
+    let first_inode = fs::metadata(&cache_path).expect("first cache").ino();
+
+    scan_sessions(options()).expect("warm scan");
+    let second_inode = fs::metadata(&cache_path).expect("second cache").ino();
+
+    assert_eq!(second_inode, first_inode);
 }

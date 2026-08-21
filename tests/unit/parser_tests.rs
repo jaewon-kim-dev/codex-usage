@@ -218,3 +218,21 @@ fn skips_non_usage_lines_with_fast_hint() {
         LineKindHint::TurnContext
     );
 }
+
+#[test]
+fn represents_missing_model_explicitly_as_unknown() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_dir = temp_dir.path().join("sessions/2026/03/06");
+    fs::create_dir_all(&sessions_dir).expect("create session dir");
+    let file_path = sessions_dir.join("rollout-unknown-model.jsonl");
+    fs::write(
+        &file_path,
+        r#"{"timestamp":"2026-03-05T23:59:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#,
+    )
+    .expect("write session file");
+
+    let summary = parse_session_file(&temp_dir.path().join("sessions"), &file_path).expect("parse");
+
+    assert_eq!(summary.events[0].model, "unknown");
+    assert!(summary.events[0].is_fallback_model);
+}

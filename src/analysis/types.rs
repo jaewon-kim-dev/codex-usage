@@ -48,20 +48,6 @@ pub struct CachedSessionSummary {
     pub session: SessionSummary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CachedManifestFile {
-    pub relative_path: String,
-    pub file_size: u64,
-    pub modified_unix_ms: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CachedManifestDirectory {
-    pub relative_dir: String,
-    pub modified_unix_ms: i64,
-    pub files: Vec<CachedManifestFile>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelTotals {
     pub usage: Usage,
@@ -76,5 +62,5 @@ pub struct ReportRow {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/types_tests.rs"]
+#[path = "../../tests/unit/types_tests.rs"]
 mod tests;

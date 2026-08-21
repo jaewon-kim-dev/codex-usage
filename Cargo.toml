@@ -2,7 +2,9 @@
 name = "codex-usage"
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Fast Codex usage analyzer written in Rust"
+repository = "https://github.com/jaewon-kim-dev/codex-usage"
 
 [[bin]]
 name = "codex-usage"

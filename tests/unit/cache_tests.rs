@@ -1,8 +1,5 @@
-use super::{load_cache, load_manifest, save_cache, save_manifest, write_atomically};
-use crate::types::{
-    CachedManifestDirectory, CachedManifestFile, CachedSessionSummary, SessionSummary, Usage,
-    UsageEvent,
-};
+use super::{load_cache, load_cache_state, save_cache, write_atomically};
+use crate::types::{CachedSessionSummary, SessionSummary, Usage, UsageEvent};
 use std::io::{self, Write};
 
 #[test]
@@ -31,39 +28,17 @@ fn roundtrips_cached_session_summaries() {
         },
     };
 
-    save_cache(&cache_path, &[entry.clone()]).expect("save cache");
+    save_cache(&cache_path, std::slice::from_ref(&entry)).expect("save cache");
     let restored = load_cache(&cache_path).expect("load cache");
 
     assert_eq!(restored, vec![entry]);
 }
 
 #[test]
-fn roundtrips_manifest_entries() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let manifest_path = temp_dir.path().join("manifest-cache.bin");
-    let entry = CachedManifestDirectory {
-        relative_dir: "2026/03/06".to_string(),
-        modified_unix_ms: 1_772_723_600_000,
-        files: vec![CachedManifestFile {
-            relative_path: "2026/03/06/rollout-1.jsonl".to_string(),
-            file_size: 4096,
-            modified_unix_ms: 1_772_723_600_000,
-        }],
-    };
-
-    save_manifest(&manifest_path, &[entry.clone()]).expect("save manifest");
-    let restored = load_manifest(&manifest_path).expect("load manifest");
-
-    assert_eq!(restored, vec![entry]);
-}
-
-#[test]
-fn treats_corrupt_binary_caches_as_empty() {
+fn treats_corrupt_session_cache_as_empty() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let cache_path = temp_dir.path().join("session-cache.bin");
-    let manifest_path = temp_dir.path().join("manifest-cache.bin");
     std::fs::write(&cache_path, []).expect("write corrupt session cache");
-    std::fs::write(&manifest_path, []).expect("write corrupt manifest cache");
 
     assert!(
         load_cache(&cache_path)
@@ -71,9 +46,9 @@ fn treats_corrupt_binary_caches_as_empty() {
             .is_empty()
     );
     assert!(
-        load_manifest(&manifest_path)
-            .expect("load manifest cache")
-            .is_empty()
+        load_cache_state(&cache_path)
+            .expect("load cache state")
+            .needs_rewrite
     );
 }
 
