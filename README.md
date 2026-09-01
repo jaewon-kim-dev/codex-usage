@@ -95,13 +95,16 @@ Use `--split-by-model` to emit separate daily or monthly rows when multiple mode
 - Known model families can use pinned built-in prices when the remote catalog is unavailable.
 - Unknown or missing models remain labeled as `unknown`, and their input, cached-input, and output prices are all treated as zero. Table and JSON totals therefore include them at `$0.0000` without guessing another model's price.
 
-The built-in GPT-5.6 preview prices per 1 million tokens are:
+The built-in GPT-5.6 short-context prices per 1 million tokens are:
 
 | Model | Input | Cached input | Output |
 | --- | ---: | ---: | ---: |
-| `gpt-5.6-luna` | $1.00 | $0.10 | $6.00 |
-| `gpt-5.6-terra` | $2.50 | $0.25 | $15.00 |
-| `gpt-5.6-sol` | $5.00 | $0.50 | $30.00 |
+| `gpt-5.6-luna` | $0.20 | $0.02 | $1.20 |
+| `gpt-5.6-terra` | $2.00 | $0.20 | $12.00 |
+| `gpt-5.6-sol` | $4.00 | $0.40 | $20.00 |
+| `gpt-daybreak-blue-latest` | $4.00 | $0.40 | $20.00 |
+
+`gpt-daybreak-blue-latest` is priced as its `gpt-5.6-sol` alias.
 
 Codex session logs currently expose cache-read tokens as `cached_input_tokens`, but do not expose a separate cache-write token count. Cost estimates therefore apply the 90% cache-read discount and do not synthesize GPT-5.6 cache-write charges.
 

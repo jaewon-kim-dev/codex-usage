@@ -46,21 +46,21 @@ const GPT_5_5_PRICING: ModelPricing = ModelPricing {
 };
 
 const GPT_5_6_LUNA_PRICING: ModelPricing = ModelPricing {
-    input_cost_per_million: 1.00,
-    cached_input_cost_per_million: 0.10,
-    output_cost_per_million: 6.00,
+    input_cost_per_million: 0.20,
+    cached_input_cost_per_million: 0.02,
+    output_cost_per_million: 1.20,
 };
 
 const GPT_5_6_TERRA_PRICING: ModelPricing = ModelPricing {
-    input_cost_per_million: 2.50,
-    cached_input_cost_per_million: 0.25,
-    output_cost_per_million: 15.00,
+    input_cost_per_million: 2.00,
+    cached_input_cost_per_million: 0.20,
+    output_cost_per_million: 12.00,
 };
 
 const GPT_5_6_SOL_PRICING: ModelPricing = ModelPricing {
-    input_cost_per_million: 5.00,
-    cached_input_cost_per_million: 0.50,
-    output_cost_per_million: 30.00,
+    input_cost_per_million: 4.00,
+    cached_input_cost_per_million: 0.40,
+    output_cost_per_million: 20.00,
 };
 
 const ZERO_COST_PRICING: ModelPricing = ModelPricing {
@@ -167,6 +167,7 @@ fn model_alias(model: &str) -> Option<&'static str> {
     match model {
         "gpt-5-codex" => Some("gpt-5"),
         "gpt-5.3-codex" => Some("gpt-5.2-codex"),
+        "gpt-daybreak-blue-latest" => Some("gpt-5.6-sol"),
         _ => None,
     }
 }

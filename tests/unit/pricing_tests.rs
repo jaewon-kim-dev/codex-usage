@@ -40,9 +40,10 @@ fn resolves_gpt_5_5_pricing() {
 #[test]
 fn resolves_gpt_5_6_family_pricing() {
     for (model, input, cached_input, output) in [
-        ("gpt-5.6-luna", 1.00, 0.10, 6.00),
-        ("gpt-5.6-terra", 2.50, 0.25, 15.00),
-        ("gpt-5.6-sol", 5.00, 0.50, 30.00),
+        ("gpt-5.6-luna", 0.20, 0.02, 1.20),
+        ("gpt-5.6-terra", 2.00, 0.20, 12.00),
+        ("gpt-5.6-sol", 4.00, 0.40, 20.00),
+        ("gpt-daybreak-blue-latest", 4.00, 0.40, 20.00),
     ] {
         let pricing = resolved_pricing(model);
         assert_eq!(pricing.input_cost_per_million, input, "{model}");
@@ -65,9 +66,10 @@ fn calculates_gpt_5_6_family_usage_cost() {
     };
 
     for (model, expected) in [
-        ("gpt-5.6-luna", 7.10),
-        ("gpt-5.6-terra", 17.75),
-        ("gpt-5.6-sol", 35.50),
+        ("gpt-5.6-luna", 1.42),
+        ("gpt-5.6-terra", 14.20),
+        ("gpt-5.6-sol", 24.40),
+        ("gpt-daybreak-blue-latest", 24.40),
     ] {
         let cost = usage_cost_usd(&empty_catalog(), model, &usage);
         assert!((cost - expected).abs() < f64::EPSILON, "{model}");
