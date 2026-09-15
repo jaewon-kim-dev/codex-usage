@@ -2,7 +2,7 @@ use crate::cache::{CacheLoad, load_cache_state, save_cache};
 use crate::parser::{
     DuplicateLineFilter, parse_session_file_with_duplicate_filter, read_session_file_identity,
 };
-use crate::types::{CachedSessionSummary, SessionSummary};
+use crate::types::{CachedSessionSummary, FileFingerprint, SessionSummary};
 use anyhow::{Context, Result};
 use chrono::{Duration, NaiveDate};
 use rayon::prelude::*;
@@ -33,6 +33,7 @@ struct ChildParentSpec {
     child_relative_path: String,
     parent_id: String,
     child_started_at_unix_ms: Option<i64>,
+    parent_file: Option<FileFingerprint>,
 }
 
 enum SessionEntryPlan {
@@ -156,8 +157,25 @@ fn discover_files_direct(
     Ok(files)
 }
 
-fn is_cache_hit(candidate: &FileCandidate, cached: &CachedSessionSummary) -> bool {
-    candidate.file_size == cached.file_size && candidate.modified_unix_ms == cached.modified_unix_ms
+fn is_cache_hit(
+    candidate: &FileCandidate,
+    cached: &CachedSessionSummary,
+    parent: Option<&FileFingerprint>,
+) -> bool {
+    candidate.absolute_path == cached.source_path
+        && candidate.file_size == cached.file_size
+        && candidate.modified_unix_ms == cached.modified_unix_ms
+        && cached.parent_file.as_ref() == parent
+}
+
+fn fingerprint(path: &Path) -> Result<FileFingerprint> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
+    Ok(FileFingerprint {
+        path: path.to_path_buf(),
+        file_size: metadata.len(),
+        modified_unix_ns: metadata.modified()?.duration_since(UNIX_EPOCH)?.as_nanos(),
+    })
 }
 
 fn find_session_files_by_id(
@@ -172,7 +190,22 @@ fn find_session_files_by_id(
         .iter()
         .map(|session_id| (format!("{session_id}.jsonl"), session_id))
         .collect::<Vec<_>>();
-    for entry in WalkDir::new(session_root).follow_links(false) {
+    let mut roots = vec![session_root.to_path_buf()];
+    if session_root
+        .file_name()
+        .is_some_and(|name| name == "sessions")
+    {
+        if let Some(home) = session_root.parent() {
+            let archive = home.join("archived_sessions");
+            if archive.is_dir() {
+                roots.push(archive);
+            }
+        }
+    }
+    for entry in roots
+        .iter()
+        .flat_map(|root| WalkDir::new(root).follow_links(false))
+    {
         let entry = entry.with_context(|| {
             format!(
                 "failed to walk session directory {}",
@@ -208,10 +241,10 @@ fn find_session_files_by_id(
     Ok(resolved)
 }
 
-fn duplicate_filters_for_files(
+fn parent_specs_for_files(
     session_root: &Path,
     files: &[FileCandidate],
-) -> Result<HashMap<String, DuplicateLineFilter>> {
+) -> Result<HashMap<String, ChildParentSpec>> {
     let identities = files
         .par_iter()
         .map(|candidate| {
@@ -245,6 +278,7 @@ fn duplicate_filters_for_files(
                     child_relative_path: relative_path.clone(),
                     parent_id: parent_id.clone(),
                     child_started_at_unix_ms: identity.started_at_unix_ms,
+                    parent_file: None,
                 })
         })
         .collect::<Vec<_>>();
@@ -256,24 +290,31 @@ fn duplicate_filters_for_files(
         .collect::<HashSet<_>>();
     let resolved_parent_paths = find_session_files_by_id(session_root, &unresolved_parent_ids)?;
 
-    let entries = child_specs
-        .par_iter()
-        .map(|spec| {
-            let parent_path = match parent_paths_by_id.get(&spec.parent_id) {
-                Some(path) => Some(path.clone()),
-                None => resolved_parent_paths.get(&spec.parent_id).cloned(),
-            };
-            let Some(parent_path) = parent_path else {
-                return Ok(None);
-            };
-
-            let filter =
-                DuplicateLineFilter::from_file(&parent_path, spec.child_started_at_unix_ms)?;
-            Ok(Some((spec.child_relative_path.clone(), filter)))
+    child_specs
+        .into_iter()
+        .map(|mut spec| {
+            if let Some(path) = parent_paths_by_id
+                .get(&spec.parent_id)
+                .or_else(|| resolved_parent_paths.get(&spec.parent_id))
+            {
+                spec.parent_file = Some(fingerprint(path)?);
+            }
+            Ok((spec.child_relative_path.clone(), spec))
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect()
+}
 
-    Ok(entries.into_iter().flatten().collect())
+fn duplicate_filter_for_file(
+    file: &FileCandidate,
+    parents: &HashMap<String, ChildParentSpec>,
+) -> Result<Option<DuplicateLineFilter>> {
+    let Some(spec) = parents.get(&file.relative_path) else {
+        return Ok(None);
+    };
+    let Some(parent) = spec.parent_file.as_ref() else {
+        return Ok(None);
+    };
+    DuplicateLineFilter::from_file(&parent.path, spec.child_started_at_unix_ms).map(Some)
 }
 
 pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
@@ -293,11 +334,20 @@ pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
         .into_iter()
         .map(|entry| (entry.session.session_path.clone(), entry))
         .collect::<HashMap<_, _>>();
+    let parents = parent_specs_for_files(options.session_root, &files)?;
     let mut plans = Vec::with_capacity(files.len());
     let mut files_to_parse = Vec::new();
     for candidate in &files {
         match cached_by_path.remove(&candidate.relative_path) {
-            Some(cached) if is_cache_hit(candidate, &cached) => {
+            Some(cached)
+                if is_cache_hit(
+                    candidate,
+                    &cached,
+                    parents
+                        .get(&candidate.relative_path)
+                        .and_then(|spec| spec.parent_file.as_ref()),
+                ) =>
+            {
                 plans.push(SessionEntryPlan::Cached(cached));
             }
             _ => {
@@ -308,7 +358,6 @@ pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
     }
     let removed_cached_session =
         options.since.is_none() && options.until.is_none() && !cached_by_path.is_empty();
-    let duplicate_filters = duplicate_filters_for_files(options.session_root, &files_to_parse)?;
 
     let parsed_entries = plans
         .into_par_iter()
@@ -318,9 +367,13 @@ pub fn scan_sessions(options: ScanOptions<'_>) -> Result<Vec<SessionSummary>> {
                 let session = parse_session_file_with_duplicate_filter(
                     options.session_root,
                     &candidate.absolute_path,
-                    duplicate_filters.get(&candidate.relative_path).cloned(),
+                    duplicate_filter_for_file(&candidate, &parents)?,
                 )?;
                 Ok(CachedSessionSummary {
+                    source_path: candidate.absolute_path.clone(),
+                    parent_file: parents
+                        .get(&candidate.relative_path)
+                        .and_then(|spec| spec.parent_file.clone()),
                     file_size: candidate.file_size,
                     modified_unix_ms: candidate.modified_unix_ms,
                     session,

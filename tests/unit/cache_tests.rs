@@ -7,9 +7,13 @@ fn roundtrips_cached_session_summaries() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let cache_path = temp_dir.path().join("session-cache.bin");
     let entry = CachedSessionSummary {
+        source_path: "rollout.jsonl".into(),
+        parent_file: None,
         file_size: 4096,
         modified_unix_ms: 1_772_723_600_000,
         session: SessionSummary {
+            unresolved_usage: Vec::new(),
+            has_rewritten_timestamps: false,
             session_id: "2026/03/06/rollout-1".to_string(),
             session_path: "2026/03/06/rollout-1.jsonl".to_string(),
             directory: Some("/Users/jaewon/sources/front-web-www".to_string()),
@@ -68,4 +72,17 @@ fn preserves_existing_cache_when_replacement_write_fails() {
         std::fs::read(&cache_path).expect("read existing cache"),
         b"valid cache"
     );
+}
+
+#[test]
+fn rejects_legacy_cache_even_at_a_custom_path() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("custom.bin");
+    // A valid pre-versioned bincode vector must be treated as a miss, not reused.
+    let bytes = bincode::serde::encode_to_vec(Vec::<u8>::new(), bincode::config::standard())
+        .expect("encode");
+    std::fs::write(&path, bytes).expect("write");
+    let state = load_cache_state(&path).expect("load");
+    assert!(state.needs_rewrite);
+    assert!(state.entries.is_empty());
 }

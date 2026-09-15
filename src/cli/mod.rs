@@ -13,7 +13,9 @@ use std::env;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+mod diagnostics;
 mod payload;
+use diagnostics::Diagnostics;
 
 use payload::{
     DailyOutput, MonthlyOutput, SessionsOutput, report_row_payloads, session_row_payloads,
@@ -23,7 +25,7 @@ use payload::{
 const DEFAULT_CODEX_HOME_DIRNAME: &str = ".codex";
 const DEFAULT_SESSIONS_SUBDIR: &str = "sessions";
 const DEFAULT_CACHE_SUBDIR: &str = "codex-usage";
-const DEFAULT_CACHE_FILENAME: &str = "session-cache-v4.bin";
+const DEFAULT_CACHE_FILENAME: &str = "session-cache-v5.bin";
 
 #[derive(Debug, Parser)]
 #[command(name = "codex-usage")]
@@ -91,6 +93,8 @@ fn run_with_cli(cli: Cli, pricing_catalog: &PricingCatalog) -> Result<()> {
         refresh_cache: cli.refresh_cache,
     })?;
 
+    let diagnostics = Diagnostics::from_sessions(&sessions, timezone, since, until);
+    diagnostics.warn();
     match cli.command.unwrap_or(Command::Daily) {
         Command::Daily => render_usage_rows(
             ReportKind::Daily,
@@ -105,6 +109,7 @@ fn run_with_cli(cli: Cli, pricing_catalog: &PricingCatalog) -> Result<()> {
             cli.json,
             pricing_catalog,
             cli.split_by_model,
+            &diagnostics,
         )?,
         Command::Monthly => render_usage_rows(
             ReportKind::Monthly,
@@ -119,12 +124,14 @@ fn run_with_cli(cli: Cli, pricing_catalog: &PricingCatalog) -> Result<()> {
             cli.json,
             pricing_catalog,
             cli.split_by_model,
+            &diagnostics,
         )?,
         Command::Sessions => render_session_rows(
             aggregate_sessions(&sessions, timezone, since, until),
             cli.json,
             timezone,
             pricing_catalog,
+            &diagnostics,
         )?,
     }
 
@@ -174,6 +181,7 @@ fn render_usage_rows(
     json_output: bool,
     pricing_catalog: &PricingCatalog,
     split_by_model: bool,
+    diagnostics: &Diagnostics,
 ) -> Result<()> {
     if json_output {
         let totals = totals_from_report_rows(&rows, pricing_catalog);
@@ -182,10 +190,12 @@ fn render_usage_rows(
             ReportKind::Daily => write_json(&DailyOutput {
                 daily: &payloads,
                 totals: &totals,
+                diagnostics,
             })?,
             ReportKind::Monthly => write_json(&MonthlyOutput {
                 monthly: &payloads,
                 totals: &totals,
+                diagnostics,
             })?,
         }
         return Ok(());
@@ -247,6 +257,7 @@ fn render_session_rows(
     json_output: bool,
     timezone: Tz,
     pricing_catalog: &PricingCatalog,
+    diagnostics: &Diagnostics,
 ) -> Result<()> {
     if json_output {
         let totals = totals_from_session_rows(&rows, pricing_catalog);
@@ -254,6 +265,7 @@ fn render_session_rows(
         write_json(&SessionsOutput {
             sessions: &payloads,
             totals: &totals,
+            diagnostics,
         })?;
         return Ok(());
     }

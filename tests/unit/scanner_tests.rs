@@ -33,7 +33,7 @@ fn filters_parent_history_when_parent_file_is_outside_date_window() {
         &child_path,
         [
             format!(
-                r#"{{"timestamp":"2026-03-06T00:00:00Z","type":"session_meta","payload":{{"id":"{child_id}","forked_from_id":"{parent_id}","cwd":"/Users/jaewon/sources"}}}}"#
+                r#"{{"timestamp":"2026-03-06T00:00:00Z","type":"session_meta","payload":{{"id":"{child_id}","parent_thread_id":"{parent_id}","cwd":"/Users/jaewon/sources"}}}}"#
             ),
             r#"{"timestamp":"2026-03-06T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#.to_string(),
             r#"{"timestamp":"2026-03-06T00:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#.to_string(),
@@ -152,4 +152,55 @@ fn unchanged_warm_scan_does_not_replace_the_session_cache() {
     let second_inode = fs::metadata(&cache_path).expect("second cache").ino();
 
     assert_eq!(second_inode, first_inode);
+}
+
+#[test]
+fn refreshes_child_when_parent_history_changes_or_moves_to_archive() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("sessions");
+    fs::create_dir_all(&root).expect("root");
+    let parent = root.join("rollout-parent.jsonl");
+    let child = root.join("rollout-child.jsonl");
+    let cache = temp.path().join("cache.bin");
+    let usage = r#"{"timestamp":"2026-08-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.4","info":{"total_token_usage":{"input_tokens":1000,"total_tokens":1000}}}}"#;
+    let parent_meta =
+        r#"{"timestamp":"2026-08-01T00:00:00Z","type":"session_meta","payload":{"id":"parent"}}"#;
+    fs::write(&parent, parent_meta).expect("parent");
+    fs::write(&child, [
+        r#"{"timestamp":"2026-08-02T00:00:00Z","type":"session_meta","payload":{"id":"child","forked_from_id":"parent"}}"#,
+        usage,
+        r#"{"timestamp":"2026-08-02T00:00:01Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.4","info":{"total_token_usage":{"input_tokens":1300,"total_tokens":1300}}}}"#,
+    ].join("\n")).expect("child");
+    let scan = |refresh_cache| {
+        scan_sessions(ScanOptions {
+            session_root: &root,
+            cache_path: &cache,
+            since: None,
+            until: None,
+            refresh_cache,
+        })
+        .expect("scan")
+    };
+    let child_tokens = |sessions: Vec<crate::types::SessionSummary>| {
+        sessions
+            .iter()
+            .find(|s| s.session_path == "rollout-child.jsonl")
+            .expect("child summary")
+            .events
+            .iter()
+            .map(|e| e.usage.total_tokens)
+            .sum::<u64>()
+    };
+    assert_eq!(child_tokens(scan(false)), 1300);
+    fs::write(&parent, format!("{parent_meta}\n{usage}\n")).expect("extend parent");
+    assert_eq!(child_tokens(scan(false)), 300);
+    assert_eq!(child_tokens(scan(true)), 300);
+    let archive = temp.path().join("archived_sessions");
+    fs::create_dir_all(&archive).expect("archive");
+    fs::rename(&parent, archive.join("rollout-parent.jsonl")).expect("archive parent");
+    assert_eq!(child_tokens(scan(false)), 300);
+    assert_eq!(child_tokens(scan(true)), 300);
+    fs::remove_file(archive.join("rollout-parent.jsonl")).expect("remove parent");
+    assert_eq!(child_tokens(scan(false)), 1300);
+    assert_eq!(child_tokens(scan(true)), 1300);
 }

@@ -5,6 +5,8 @@ use chrono::{TimeZone, Utc};
 #[test]
 fn groups_usage_by_day_in_requested_timezone() {
     let sessions = vec![SessionSummary {
+        unresolved_usage: Vec::new(),
+        has_rewritten_timestamps: false,
         session_id: "2026/03/06/rollout-1".to_string(),
         session_path: "2026/03/06/rollout-1.jsonl".to_string(),
         directory: Some("/Users/jaewon/sources/front-web-www".to_string()),
@@ -62,6 +64,8 @@ fn groups_usage_by_day_in_requested_timezone() {
 #[test]
 fn splits_daily_rows_by_model_when_requested() {
     let sessions = vec![SessionSummary {
+        unresolved_usage: Vec::new(),
+        has_rewritten_timestamps: false,
         session_id: "2026/03/06/rollout-1".to_string(),
         session_path: "2026/03/06/rollout-1.jsonl".to_string(),
         directory: Some("/Users/jaewon/sources/front-web-www".to_string()),

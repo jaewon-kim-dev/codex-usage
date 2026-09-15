@@ -29,7 +29,15 @@ pub(super) struct LineEnvelope {
 pub(super) struct SessionMetaPayload {
     pub(super) id: Option<String>,
     pub(super) forked_from_id: Option<String>,
+    pub(super) parent_thread_id: Option<String>,
+    pub(super) history_mode: Option<String>,
     pub(super) cwd: Option<String>,
+}
+
+impl SessionMetaPayload {
+    pub(super) fn parent_id(&self) -> Option<String> {
+        first_non_empty(&[self.forked_from_id.clone(), self.parent_thread_id.clone()])
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +49,7 @@ pub(super) struct TurnContextPayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct EventPayload {
+    pub(super) started_at: Option<i64>,
     #[serde(rename = "type")]
     pub(super) kind: String,
     pub(super) info: Option<TokenInfo>,
@@ -143,6 +152,8 @@ pub(super) fn line_kind_hint(bytes: &[u8]) -> LineKindHint {
 
 pub(super) fn normalized_line_key(trimmed: &[u8]) -> Option<Vec<u8>> {
     let mut value = serde_json::from_slice::<Value>(trimmed).ok()?;
-    value.as_object_mut()?.remove("timestamp");
+    let object = value.as_object_mut()?;
+    object.remove("timestamp");
+    object.remove("ordinal");
     serde_json::to_vec(&value).ok()
 }

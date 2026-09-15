@@ -59,8 +59,8 @@ pub fn read_session_file_identity(file_path: &Path) -> Result<SessionFileIdentit
         };
 
         return Ok(SessionFileIdentity {
+            forked_from_id: meta.parent_id(),
             session_id: non_empty(meta.id),
-            forked_from_id: non_empty(meta.forked_from_id),
             started_at_unix_ms: envelope
                 .timestamp
                 .as_deref()
@@ -81,16 +81,27 @@ pub fn parse_session_file_with_duplicate_filter(
     duplicate_filter: Option<DuplicateLineFilter>,
 ) -> Result<SessionSummary> {
     let mut events = Vec::new();
-    let (session_path, directory) =
-        scan_session_file_internal(session_root, file_path, duplicate_filter, |event| {
-            events.push(event);
-        })?;
+    let mut unresolved_usage = Vec::new();
+    let (session_path, directory, has_rewritten_timestamps) = scan_session_file_internal(
+        session_root,
+        file_path,
+        duplicate_filter,
+        |event, unresolved| {
+            if unresolved {
+                unresolved_usage.push(event);
+            } else {
+                events.push(event);
+            }
+        },
+    )?;
 
     Ok(SessionSummary {
         session_id: session_path.trim_end_matches(".jsonl").to_string(),
         session_path,
         directory,
         events,
+        unresolved_usage,
+        has_rewritten_timestamps,
     })
 }
 
@@ -98,8 +109,8 @@ fn scan_session_file_internal(
     session_root: &Path,
     file_path: &Path,
     mut duplicate_filter: Option<DuplicateLineFilter>,
-    mut on_event: impl FnMut(UsageEvent),
-) -> Result<(String, Option<String>)> {
+    mut on_event: impl FnMut(UsageEvent, bool),
+) -> Result<(String, Option<String>, bool)> {
     let relative_path = file_path
         .strip_prefix(session_root)
         .with_context(|| {
@@ -119,6 +130,12 @@ fn scan_session_file_internal(
     let mut current_model: Option<String> = None;
     let mut current_model_is_fallback = false;
     let mut previous_totals: Option<Usage> = None;
+    let mut paginated_child = false;
+    let mut paginated = false;
+    let mut previous_task_start = None;
+    let mut previous_usage_timestamp = None;
+    let mut has_rewritten_timestamps = false;
+    let mut saw_turn_context = false;
     let mut inherited_prefix = InheritedPrefixState::default();
     let mut line_buffer = Vec::<u8>::with_capacity(8 * 1024);
 
@@ -161,12 +178,15 @@ fn scan_session_file_internal(
                         let embedded_source_meta =
                             inherited_prefix.observe_session_meta(&meta, timestamp_unix_ms);
                         if !embedded_source_meta {
+                            paginated = meta.history_mode.as_deref() == Some("paginated");
+                            paginated_child = paginated && meta.parent_id().is_some();
                             directory = meta.cwd.filter(|cwd| !cwd.trim().is_empty()).or(directory);
                         }
                     }
                 }
             }
             "turn_context" => {
+                saw_turn_context = true;
                 inherited_prefix.observe_non_token_line(
                     envelope
                         .timestamp
@@ -199,6 +219,16 @@ fn scan_session_file_internal(
                 let Ok(event_payload) = serde_json::from_str::<EventPayload>(payload.get()) else {
                     continue;
                 };
+                if paginated && event_payload.kind == "task_started" {
+                    if let Some(started_at) = event_payload.started_at {
+                        if let Some((previous_timestamp, previous_started_at)) = previous_task_start
+                        {
+                            has_rewritten_timestamps |= previous_timestamp == timestamp_unix_ms
+                                && previous_started_at != started_at;
+                        }
+                        previous_task_start = Some((timestamp_unix_ms, started_at));
+                    }
+                }
                 let is_inherited_prefix_usage_line = if event_payload.kind == "token_count" {
                     inherited_prefix.observe_token_count(Some(timestamp_unix_ms))
                 } else {
@@ -226,11 +256,29 @@ fn scan_session_file_internal(
                 let Some(usage) = total_usage
                     .as_ref()
                     .map(|current| subtract_usage(current.clone(), previous_totals.clone()))
-                    .or(last_usage)
+                    .or(last_usage.clone())
                 else {
                     continue;
                 };
 
+                if paginated
+                    && previous_usage_timestamp == Some(timestamp_unix_ms)
+                    && previous_totals
+                        .as_ref()
+                        .zip(total_usage.as_ref())
+                        .is_some_and(|(previous, current)| previous != current)
+                {
+                    has_rewritten_timestamps = true;
+                }
+                previous_usage_timestamp = Some(timestamp_unix_ms);
+                // Truncated child history may start with an inherited cumulative ledger.
+                // Preserve unmatched checkpoints and context-less prefixes as unresolved,
+                // while a first request whose last usage equals its total is self-contained.
+                let unresolved_baseline = paginated_child
+                    && (!saw_turn_context
+                        || (previous_totals.is_none()
+                            && total_usage.is_some()
+                            && total_usage != last_usage));
                 if let Some(total_usage) = total_usage.as_ref() {
                     previous_totals = Some(total_usage.clone());
                 }
@@ -275,18 +323,21 @@ fn scan_session_file_internal(
                     model
                 };
 
-                on_event(UsageEvent {
-                    timestamp_unix_ms,
-                    model,
-                    is_fallback_model,
-                    usage,
-                });
+                on_event(
+                    UsageEvent {
+                        timestamp_unix_ms,
+                        model,
+                        is_fallback_model,
+                        usage,
+                    },
+                    unresolved_baseline,
+                );
             }
             _ => {}
         }
     }
 
-    Ok((relative_path, directory))
+    Ok((relative_path, directory, has_rewritten_timestamps))
 }
 
 #[cfg(test)]

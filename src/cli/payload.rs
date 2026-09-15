@@ -65,18 +65,21 @@ pub(super) struct TotalsPayload {
 pub(super) struct DailyOutput<'a> {
     pub(super) daily: &'a [ReportRowPayload],
     pub(super) totals: &'a TotalsPayload,
+    pub(super) diagnostics: &'a super::diagnostics::Diagnostics,
 }
 
 #[derive(serde::Serialize)]
 pub(super) struct MonthlyOutput<'a> {
     pub(super) monthly: &'a [ReportRowPayload],
     pub(super) totals: &'a TotalsPayload,
+    pub(super) diagnostics: &'a super::diagnostics::Diagnostics,
 }
 
 #[derive(serde::Serialize)]
 pub(super) struct SessionsOutput<'a> {
     pub(super) sessions: &'a [SessionRowPayload],
     pub(super) totals: &'a TotalsPayload,
+    pub(super) diagnostics: &'a super::diagnostics::Diagnostics,
 }
 
 fn model_totals_payloads(

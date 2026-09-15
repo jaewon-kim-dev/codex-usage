@@ -142,7 +142,7 @@ fn suppresses_forked_parent_token_counts_but_keeps_total_usage_delta_baseline() 
         [
             r#"{"timestamp":"2026-03-05T23:59:00Z","type":"session_meta","payload":{"id":"parent-session","cwd":"/Users/jaewon/sources"}}"#,
             r#"{"timestamp":"2026-03-05T23:59:01Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#,
-            r#"{"timestamp":"2026-03-05T23:59:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:02Z","ordinal":302,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
         ]
         .join("\n"),
     )
@@ -152,7 +152,7 @@ fn suppresses_forked_parent_token_counts_but_keeps_total_usage_delta_baseline() 
         [
             r#"{"timestamp":"2026-03-05T23:59:04Z","type":"session_meta","payload":{"id":"child-session","forked_from_id":"parent-session","cwd":"/Users/jaewon/sources"}}"#,
             r#"{"timestamp":"2026-03-05T23:59:04Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}"#,
-            r#"{"timestamp":"2026-03-05T23:59:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
+            r#"{"timestamp":"2026-03-05T23:59:05Z","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":20,"total_tokens":1200}}}}"#,
             r#"{"timestamp":"2026-03-05T23:59:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":150,"output_tokens":250,"reasoning_output_tokens":20,"total_tokens":1750}}}}"#,
         ]
         .join("\n"),
@@ -235,4 +235,74 @@ fn represents_missing_model_explicitly_as_unknown() {
 
     assert_eq!(summary.events[0].model, "unknown");
     assert!(summary.events[0].is_fallback_model);
+}
+
+#[test]
+fn separates_unresolved_child_prefix_from_new_usage_without_compaction_marker() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file = temp.path().join("child.jsonl");
+    fs::write(&file, [
+        r#"{"timestamp":"2026-08-08T08:50:45Z","ordinal":0,"type":"session_meta","payload":{"id":"child","parent_thread_id":"parent","history_mode":"paginated"}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"output_tokens":200,"total_tokens":1200}}}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","ordinal":3,"type":"turn_context","payload":{"model":"gpt-5.4"}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","ordinal":4,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"output_tokens":250,"total_tokens":1750}}}}"#,
+    ].join("\n")).expect("write");
+    let summary = parse_session_file(temp.path(), &file).expect("parse");
+    assert_eq!(
+        summary
+            .events
+            .iter()
+            .map(|e| e.usage.total_tokens)
+            .sum::<u64>(),
+        550
+    );
+    assert_eq!(summary.events[0].model, "gpt-5.4");
+    assert_eq!(summary.unresolved_usage[0].usage.total_tokens, 1200);
+}
+
+#[test]
+fn preserves_compacted_root_usage_without_a_parent() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file = temp.path().join("root.jsonl");
+    fs::write(&file, [
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"session_meta","payload":{"id":"root","history_mode":"paginated"}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"compacted","payload":{}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"output_tokens":200,"total_tokens":1200}}}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"output_tokens":250,"total_tokens":1750}}}}"#,
+    ].join("\n")).expect("write");
+    let summary = parse_session_file(temp.path(), &file).expect("parse");
+    assert_eq!(summary.events[0].usage.total_tokens, 1200);
+    assert_eq!(summary.events[0].model, "unknown");
+    assert_eq!(summary.events[1].usage.total_tokens, 550);
+    assert!(summary.has_rewritten_timestamps);
+}
+
+#[test]
+fn reports_rewritten_paginated_timestamps_without_guessing_usage_dates() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file = temp.path().join("rewritten.jsonl");
+    fs::write(&file, [
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"session_meta","payload":{"id":"root","history_mode":"paginated"}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"event_msg","payload":{"type":"task_started","started_at":1786178981}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"total_tokens":1000}}}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"event_msg","payload":{"type":"task_started","started_at":1786179046}}"#,
+    ].join("\n")).expect("write");
+    let summary = parse_session_file(temp.path(), &file).expect("parse");
+    assert_eq!(summary.events[0].usage.total_tokens, 1000);
+    assert!(summary.has_rewritten_timestamps);
+}
+
+#[test]
+fn keeps_self_contained_first_request_in_paginated_child() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file = temp.path().join("child.jsonl");
+    fs::write(&file, [
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"session_meta","payload":{"id":"child","parent_thread_id":"parent","history_mode":"paginated"}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:45Z","type":"turn_context","payload":{"model":"gpt-5.4"}}"#,
+        r#"{"timestamp":"2026-08-08T08:50:46Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"output_tokens":200,"total_tokens":1200},"total_token_usage":{"input_tokens":1000,"output_tokens":200,"total_tokens":1200}}}}"#,
+    ].join("\n")).expect("write");
+    let summary = parse_session_file(temp.path(), &file).expect("parse");
+    assert_eq!(summary.events[0].usage.total_tokens, 1200);
+    assert!(summary.unresolved_usage.is_empty());
+    assert!(!summary.has_rewritten_timestamps);
 }

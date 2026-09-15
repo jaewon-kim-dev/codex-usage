@@ -33,8 +33,11 @@ where
 
     let encoded = bincode::serde::encode_to_vec(entries, bincode::config::standard())
         .context("failed to encode cache entries")?;
-    write_atomically(cache_path, |file| file.write_all(&encoded))
-        .with_context(|| format!("failed to write cache file {}", cache_path.display()))?;
+    write_atomically(cache_path, |file| {
+        file.write_all(b"codex-usage-v5\0")?;
+        file.write_all(&encoded)
+    })
+    .with_context(|| format!("failed to write cache file {}", cache_path.display()))?;
     Ok(())
 }
 
@@ -52,7 +55,13 @@ pub(crate) fn load_cache_state(cache_path: &Path) -> Result<CacheLoad<Vec<Cached
 
     let bytes = fs::read(cache_path)
         .with_context(|| format!("failed to read cache file {}", cache_path.display()))?;
-    let Ok((entries, _)) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+    let Some(bytes) = bytes.strip_prefix(b"codex-usage-v5\0") else {
+        return Ok(CacheLoad {
+            entries: Vec::new(),
+            needs_rewrite: true,
+        });
+    };
+    let Ok((entries, _)) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
     else {
         return Ok(CacheLoad {
             entries: Vec::new(),

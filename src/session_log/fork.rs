@@ -116,10 +116,7 @@ impl InheritedPrefixState {
 
         if !self.first_session_meta_seen {
             self.first_session_meta_seen = true;
-            self.first_session_is_forked = meta
-                .forked_from_id
-                .as_ref()
-                .is_some_and(|id| !id.trim().is_empty());
+            self.first_session_is_forked = meta.parent_id().is_some();
             return false;
         }
 

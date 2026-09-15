@@ -181,3 +181,28 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
+
+### Paginated history and incomplete usage
+
+Forked histories are compared with their parent using event content, excluding
+file-local timestamps and ordinals. Both `forked_from_id` and `parent_thread_id`
+are recognized. A parent in `archived_sessions` is used for this comparison but
+is not added to the report. Cached child results are invalidated when the parent
+changes, appears, disappears, or moves. Version 5 caches also reject older cache
+formats, including at a custom `--cache-path`.
+
+A child checkpoint or a prefix without a turn context can contain inherited usage
+and usage from discarded child history. This also occurs without a `compacted` marker. If it cannot be matched to the parent, its ownership
+cannot be established. It is retained under
+`diagnostics.unresolved_history_usage` in JSON and excluded from normal totals;
+standard error warns that the report is incomplete. These cumulative checkpoints
+can overlap and must not be added together as new usage. Root usage without a
+parent is preserved, including `unknown*` when the model is unavailable.
+
+Some migrated histories contain rewritten event timestamps. When changing cumulative usage or different task
+start times have the same stored event timestamp, the CLI reports the affected
+paths under `diagnostics.rewritten_timestamp_sessions` and warns on standard error.
+Daily and monthly reports use the stored timestamps; they cannot reconstruct
+original dates or models from information discarded by compaction or migration.
+A reduced total after this repair is not proof that all historical usage has been
+recovered. The analyzer never rewrites Codex session logs.

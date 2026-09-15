@@ -39,13 +39,24 @@ pub struct SessionSummary {
     pub session_path: String,
     pub directory: Option<String>,
     pub events: Vec<UsageEvent>,
+    pub unresolved_usage: Vec<UsageEvent>,
+    pub has_rewritten_timestamps: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedSessionSummary {
+    pub source_path: std::path::PathBuf,
+    pub parent_file: Option<FileFingerprint>,
     pub file_size: u64,
     pub modified_unix_ms: i64,
     pub session: SessionSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileFingerprint {
+    pub path: std::path::PathBuf,
+    pub file_size: u64,
+    pub modified_unix_ns: u128,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
